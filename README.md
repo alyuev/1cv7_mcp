@@ -48,6 +48,9 @@ HTTP-сервер по протоколу **MCP** (Model Context Protocol, тр�
 (`CoRegisterClassObject`, реестр не трогается), а окну параметров передаётся CLSID через
 `CAppFrame::m_OlePropertyPageSite.AddPropertyPage(CLSID, NULL)` — см. `src\optpage.cpp`.
 
+Справка для синтакс-помощника Конфигуратора — [1cmcp.als](1cmcp.als) (положить рядом с `1cmcp.dll`
+в каталог `BIN`). Она собирается скриптом `python docs/make_als.py` из текстов внутри него.
+
 ## Подключение Claude Code
 
 Команду с адресом и токеном копирует кнопка на вкладке «MCP-сервер»:
