@@ -202,7 +202,7 @@ class CMcpHost : public McpHost {
                     return false;
                 }
                 fm = McpFormModule(f);
-                McpFlashWnd(f.frame, RGB(30, 120, 230), 1500, 4);
+                McpFlash(f.frame, MCP_HL_FORM, 1500);
             }
             return RunModule(Utf8ToCp1251(args.get("code").asStr()), 0, text, ctx, fm);
         }
@@ -264,7 +264,7 @@ class CMcpHost : public McpHost {
             if(open) {
                 McpForm nf;
                 std::string e2;
-                if(McpFindForm(JVal::object(), nf, e2)) McpFlashWnd(nf.frame, RGB(30, 120, 230), 1500, 4);
+                if(McpFindForm(JVal::object(), nf, e2)) McpFlash(nf.frame, MCP_HL_FORM, 1500);
             }
             if(rr.has("messages")) r.set("messages", rr.get("messages"));
             text = r.dump();
@@ -323,7 +323,7 @@ class CMcpHost : public McpHost {
                 return false;
             }
             r.set("form", McpFormJson(f));
-            McpFlashWnd(f.frame, RGB(30, 120, 230), 1200, 4);
+            McpFlash(f.frame, MCP_HL_FORM, 1200);
             bool ok = McpReadTable(f, (int)args.get("from_row").asNum(1), (int)args.get("max_rows").asNum(200),
                                    (int)args.get("max_columns").asNum(50), r, err);
             if(!ok) r.set("error", JVal::string(err));
@@ -356,7 +356,7 @@ class CMcpHost : public McpHost {
             bool ok;
             if(tool == "call_form_procedure") {
                 r.set("form", McpFormJson(f));
-                McpFlashWnd(f.frame, RGB(30, 120, 230), 1500, 4);
+                McpFlash(f.frame, MCP_HL_FORM, 1500);
                 ok = McpCallFormProc(f, args.get("name").asStr(), args.get("args"), r, err);
             } else if(tool == "press_button") {
                 r.set("form", McpFormJson(f));

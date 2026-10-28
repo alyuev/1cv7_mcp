@@ -4,6 +4,7 @@
 // Source encoding: CP1251.
 #include "StdAfx.h"
 #include "forms.h"
+#include <math.h>
 #include "textconv.h"
 
 static std::string U(const CString& s) { return Cp1251ToUtf8((LPCSTR)s); }
@@ -295,22 +296,52 @@ static void Activate(const McpForm& f) {
 }
 
 // ---------------------------------------------------------------- highlight
-// Shows the user where the agent acts. Two ways:
-//  frame - four thin popup windows around the target (owned by the 1C main window, no activation).
-//          Touches nothing inside 1C, so it works for any control and for whole forms.
+// Shows the user where the agent acts:
+//  frame - four thin popup windows around the target (owned by the 1C main window, no activation),
+//          animated: it appears wider and closes in on the target (~0.2 s), the colour pulses between
+//          two tones, at the end it fades out (layered windows). Touches nothing inside 1C, so it
+//          works for any control and for whole forms, and follows the target if the form moves.
 //  color - FormEx's way (AttribEx.cpp, ÷вет‘она): CControlID::SetBkColor + for 1C's own controls
 //          (1CEDIT) the colour in the window's private data GetWindowLong(hwnd, 0)[0]. That private
-//          data exists only in 1C's control classes - for "Button" and others it is NOT written.
-// Both are undone by a thread timer (also fires inside modal loops).
+//          data exists only in 1C's control classes - for "Button" and others it is NOT written
+//          (FormEx itself throws there on a checkbox).
+// One thread timer (30 ms, runs only while something is shown) drives all of it; it also fires
+// inside modal loops. While 1C runs a long formula the frame simply stands still.
 bool g_mcpHighlight = true;
 
 #ifndef WS_EX_NOACTIVATE
 #define WS_EX_NOACTIVATE 0x08000000L
 #endif
+#ifndef WS_EX_LAYERED
+#define WS_EX_LAYERED 0x00080000
+#endif
+#ifndef LWA_ALPHA
+#define LWA_ALPHA 0x00000002
+#endif
+
+typedef BOOL(WINAPI* SetLayeredFn)(HWND, COLORREF, BYTE, DWORD);
+static SetLayeredFn LayeredFn() {
+    static SetLayeredFn fn = (SetLayeredFn)GetProcAddress(GetModuleHandleA("user32.dll"), "SetLayeredWindowAttributes");
+    return fn;
+}
+
+struct HlStyle {
+    COLORREF a, b;
+    int thick;
+};
+static const HlStyle kStyles[] = {
+    {RGB(255, 150, 0), RGB(225, 30, 30), 3},    // MCP_HL_ACTION: orange <-> red
+    {RGB(120, 190, 255), RGB(20, 90, 220), 4},  // MCP_HL_FORM: light blue <-> blue
+    {RGB(255, 210, 0), RGB(255, 120, 0), 3},    // MCP_HL_FIELD: yellow <-> orange
+};
 
 struct HlItem {
-    UINT timer;
+    int id;
+    HWND target;
     HWND strips[4];
+    int style;
+    DWORD start;
+    int ms;
     HWND frame;        // form frame: the colour is restored only while the form is alive
     CControlID* ctl;   // color mode
     HWND wnd;
@@ -319,6 +350,8 @@ struct HlItem {
     bool data0;
 };
 static std::vector<HlItem> g_hl;
+static UINT g_hlTimer = 0;
+static int g_hlNextId = 1;
 
 static LRESULT CALLBACK StripProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     if(msg == WM_ERASEBKGND) {
@@ -331,6 +364,31 @@ static LRESULT CALLBACK StripProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     }
     if(msg == WM_NCHITTEST) return HTTRANSPARENT;
     return DefWindowProc(h, msg, wp, lp);
+}
+
+static HWND Strip(HWND owner) {
+    static bool reg = false;
+    extern HINSTANCE g_hInstDll;
+    if(!reg) {
+        WNDCLASSA wc;
+        memset(&wc, 0, sizeof(wc));
+        wc.lpfnWndProc = StripProc;
+        wc.hInstance = g_hInstDll;
+        wc.lpszClassName = "1cmcpHighlight";
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        RegisterClassA(&wc);
+        reg = true;
+    }
+    DWORD ex = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | (LayeredFn() ? WS_EX_LAYERED : 0);
+    HWND s = CreateWindowExA(ex, "1cmcpHighlight", "", WS_POPUP, 0, 0, 1, 1, owner, NULL, g_hInstDll, NULL);
+    if(s && LayeredFn()) LayeredFn()(s, 0, 255, LWA_ALPHA);
+    return s;
+}
+
+static COLORREF Mix(COLORREF a, COLORREF b, double f) {
+    return RGB((int)(GetRValue(a) + (GetRValue(b) - GetRValue(a)) * f),
+               (int)(GetGValue(a) + (GetGValue(b) - GetGValue(a)) * f),
+               (int)(GetBValue(a) + (GetBValue(b) - GetBValue(a)) * f));
 }
 
 static void HlUndo(HlItem& it) {
@@ -346,65 +404,92 @@ static void HlUndo(HlItem& it) {
     }
 }
 
-static VOID CALLBACK HlTimer(HWND, UINT, UINT id, DWORD) {
-    KillTimer(NULL, id);
-    for(size_t i = 0; i < g_hl.size(); i++)
-        if(g_hl[i].timer == id) {
-            HlUndo(g_hl[i]);
-            g_hl.erase(g_hl.begin() + i);
-            break;
-        }
-}
-
-static HWND Strip(int x, int y, int w, int h, COLORREF col, HWND owner) {
-    static bool reg = false;
-    extern HINSTANCE g_hInstDll;
-    if(!reg) {
-        WNDCLASSA wc;
-        memset(&wc, 0, sizeof(wc));
-        wc.lpfnWndProc = StripProc;
-        wc.hInstance = g_hInstDll;
-        wc.lpszClassName = "1cmcpHighlight";
-        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-        RegisterClassA(&wc);
-        reg = true;
+// one frame of the animation; false = finished
+static bool HlStep(HlItem& it, DWORD now) {
+    int t = (int)(now - it.start);
+    if(t >= it.ms || !it.target || !IsWindow(it.target)) return false;
+    if(!it.strips[0]) return true;  // colour only
+    const HlStyle& st = kStyles[it.style];
+    if(!IsWindowVisible(it.target)) {
+        for(int i = 0; i < 4; i++) ShowWindow(it.strips[i], SW_HIDE);
+        return true;
     }
-    HWND s = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, "1cmcpHighlight", "", WS_POPUP, x, y, w, h, owner,
-                             NULL, g_hInstDll, NULL);
-    if(s) {
+    // close in: 12 px wider at the start, on the target after 200 ms (ease-out)
+    double k = t < 200 ? 1.0 - t / 200.0 : 0.0;
+    int grow = (int)(12 * k * k);
+    // pulse: a -> b -> a every 900 ms
+    double f = (1.0 - cos(t * 2.0 * 3.14159265 / 900.0)) / 2.0;
+    COLORREF col = Mix(st.a, st.b, f);
+    // fade out during the last 300 ms
+    int left = it.ms - t;
+    BYTE alpha = (BYTE)(left < 300 ? 255 * left / 300 : 255);
+    RECT r;
+    GetWindowRect(it.target, &r);
+    int d = st.thick + 1 + grow;
+    InflateRect(&r, d, d);
+    int w = r.right - r.left, h = r.bottom - r.top, th = st.thick;
+    int pos[4][4] = {{r.left, r.top, w, th}, {r.left, r.bottom - th, w, th}, {r.left, r.top, th, h},
+                     {r.right - th, r.top, th, h}};
+    for(int i = 0; i < 4; i++) {
+        HWND s = it.strips[i];
         SetWindowLong(s, GWL_USERDATA, (LONG)col);
-        SetWindowPos(s, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        if(LayeredFn()) LayeredFn()(s, 0, alpha, LWA_ALPHA);
+        SetWindowPos(s, HWND_TOP, pos[i][0], pos[i][1], pos[i][2], pos[i][3],
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        InvalidateRect(s, NULL, TRUE);
         UpdateWindow(s);
     }
-    return s;
+    return true;
 }
 
-static void HlAdd(HlItem& it, int ms) {
-    it.timer = SetTimer(NULL, 0, ms < 200 ? 200 : ms, HlTimer);
+static VOID CALLBACK HlTimer(HWND, UINT, UINT, DWORD) {
+    DWORD now = GetTickCount();
+    for(size_t i = 0; i < g_hl.size();) {
+        if(HlStep(g_hl[i], now))
+            i++;
+        else {
+            HlUndo(g_hl[i]);
+            g_hl.erase(g_hl.begin() + i);
+        }
+    }
+    if(g_hl.empty() && g_hlTimer) {
+        KillTimer(NULL, g_hlTimer);
+        g_hlTimer = 0;
+    }
+}
+
+static int HlAdd(HlItem& it, int ms) {
+    it.id = g_hlNextId++;
+    it.start = GetTickCount();
+    it.ms = ms < 400 ? 400 : ms;
     g_hl.push_back(it);
+    HlStep(g_hl.back(), it.start);  // first frame right away, before 1C gets busy
+    if(!g_hlTimer) g_hlTimer = SetTimer(NULL, 0, 30, HlTimer);
+    return it.id;
 }
 
-void McpFlashWnd(HWND target, COLORREF col, int ms, int thick) {
-    if(!g_mcpHighlight || !target || !IsWindow(target) || !IsWindowVisible(target)) return;
+int McpFlash(HWND target, int style, int ms) {
+    if(!g_mcpHighlight || !target || !IsWindow(target) || !IsWindowVisible(target)) return 0;
     CMDIFrameWnd* mf = GetMainFrame();
     HWND owner = mf ? mf->m_hWnd : NULL;
-    RECT r;
-    GetWindowRect(target, &r);
-    InflateRect(&r, thick + 1, thick + 1);
     HlItem it;
     memset(&it, 0, sizeof(it));
-    int w = r.right - r.left, h = r.bottom - r.top;
-    it.strips[0] = Strip(r.left, r.top, w, thick, col, owner);
-    it.strips[1] = Strip(r.left, r.bottom - thick, w, thick, col, owner);
-    it.strips[2] = Strip(r.left, r.top, thick, h, col, owner);
-    it.strips[3] = Strip(r.right - thick, r.top, thick, h, col, owner);
-    HlAdd(it, ms);
+    it.target = target;
+    it.style = style;
+    for(int i = 0; i < 4; i++) it.strips[i] = Strip(owner);
+    return HlAdd(it, ms);
+}
+
+void McpFlashRestart(int id) {
+    for(size_t i = 0; i < g_hl.size(); i++)
+        if(g_hl[i].id == id) g_hl[i].start = GetTickCount() - 200;  // keep the frame on target, no close-in
 }
 
 static bool HlColor(const McpForm& f, const McpCtrl& m, COLORREF col, int ms) {
     if(!m.ctl || !m.wnd) return false;
     HlItem it;
     memset(&it, 0, sizeof(it));
+    it.target = m.wnd;
     it.frame = f.frame;
     it.ctl = m.ctl;
     it.wnd = m.wnd;
@@ -440,10 +525,11 @@ static const McpCtrl* FindControl(const std::vector<McpCtrl>& v, const std::stri
 
 bool McpHighlight(const McpForm& f, const std::string& control, const std::string& mode, int ms, JVal& info,
                   std::string& err) {
-    if(control.empty()) {  // the whole form; an explicit request shows even with the setting off
-        bool saved = g_mcpHighlight;
-        g_mcpHighlight = true;
-        McpFlashWnd(f.frame, RGB(30, 120, 230), ms, 4);
+    // an explicit request shows even with the setting off
+    bool saved = g_mcpHighlight;
+    g_mcpHighlight = true;
+    if(control.empty()) {  // the whole form
+        McpFlash(f.frame, MCP_HL_FORM, ms);
         g_mcpHighlight = saved;
         info.set("target", JVal::string("form"));
         return true;
@@ -452,25 +538,26 @@ bool McpHighlight(const McpForm& f, const std::string& control, const std::strin
     Controls(f, v);
     const McpCtrl* hit = FindControl(v, control);
     if(!hit || !hit->wnd) {
+        g_mcpHighlight = saved;
         err = Cp1251ToUtf8("на форме нет элемента \"") + control + Cp1251ToUtf8("\" (см. form_controls)");
         return false;
     }
     info.set("id", JVal::number(hit->id));
     info.set("class", JVal::string(U(hit->cls)));
-    // the FormEx colour shows only on 1C's own fields (1CEDIT); a standard Button/checkbox ignores
-    // CControlID's colour (checked on the test base) - those get the frame
-    if(mode == "color" && hit->cls == "1CEDIT") {
-        HlColor(f, *hit, RGB(255, 220, 60), ms);
-        info.set("mode", JVal::string("color"));
+    // input fields (1CEDIT): FormEx-style fill + frame, unless mode=frame; the colour is not visible on a
+    // standard Button/checkbox (and its private data must not be written) - those get the frame only
+    bool field = hit->cls == "1CEDIT";
+    if(field && mode != "frame") {
+        HlColor(f, *hit, RGB(255, 225, 90), ms);
+        McpFlash(hit->wnd, MCP_HL_FIELD, ms);
+        info.set("mode", JVal::string("color+frame"));
     } else {
         if(mode == "color")
             info.set("note", JVal::string(Cp1251ToUtf8("цвет виден только у полей ввода, показана рамка")));
-        bool saved = g_mcpHighlight;
-        g_mcpHighlight = true;
-        McpFlashWnd(hit->wnd, RGB(230, 40, 40), ms, 3);
-        g_mcpHighlight = saved;
+        McpFlash(hit->wnd, field ? MCP_HL_FIELD : MCP_HL_ACTION, ms);
         info.set("mode", JVal::string("frame"));
     }
+    g_mcpHighlight = saved;
     return true;
 }
 
@@ -511,7 +598,8 @@ bool McpPressButton(const McpForm& f, const std::string& button, std::string& er
         return false;
     }
     Activate(f);
-    McpFlashWnd(hit->wnd, RGB(230, 40, 40), 1500, 3);  // visible while the formula runs and a bit after
+    // the frame closes in on the button first, stands still while 1C runs the formula, then pulses
+    int hl = McpFlash(hit->wnd, MCP_HL_ACTION, 1800);
     // BM_CLICK = mouse down/up on the button: 1C sees a real click (a checkbox toggles too)
     // and runs the formula right here, inside this call
     if(afx)  // not a Windows button: notify the dialog the way a button does, 1C runs the formula
@@ -520,6 +608,7 @@ bool McpPressButton(const McpForm& f, const std::string& button, std::string& er
         SendMessage(hit->wnd, BM_CLICK, 0, 0);
     if(Kind(*hit) == "флажок" && IsWindow(hit->wnd))
         info.set("checked", JVal::boolean(SendMessage(hit->wnd, BM_GETCHECK, 0, 0) == BST_CHECKED));
+    McpFlashRestart(hl);  // full pulse after the formula, even if it took long
     info.set("form_closed", JVal::boolean(!IsWindow(f.frame)));
     return true;
 }
