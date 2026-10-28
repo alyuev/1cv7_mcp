@@ -4,7 +4,9 @@ Output: CP1251, CRLF, quotes doubled - same format as 1sqlite.als / FormEx.als.
 Usage: python docs/make_als.py [out.als]   (default: 1cmcp.als in the project root)"""
 import os, re, sys
 
-G = "1cmcp"
+# Second field of every Folder/Item is the record type, not a group name: the Configurator
+# shows only "AST" records from add-on .als files (every working file in BIN uses it).
+G = "AST"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VERSION = re.search(r'#define MCP_VERSION "([^"]+)"', open(os.path.join(ROOT, "core", "mcp_version.h")).read()).group(1)
 
