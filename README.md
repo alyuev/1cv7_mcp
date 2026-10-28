@@ -128,7 +128,11 @@ powershell -NoProfile -File build.ps1
   диалогом, `metadata`; `VK\1duckdb\ClinicTest\clinic_1cmcp_metadata.py` — `metadata` на большой
   конфигурации через OLE (`run_py.ps1 -Script clinic_1cmcp_metadata.py`);
 - `python docs/extract_commands.py` пересобирает [docs/system_commands.md](docs/system_commands.md) из
-  ресурсов DLL платформы в `BIN` (меню, клавиши, подсказки строки состояния; нужен `pefile`);
+  ресурсов DLL платформы в `BIN` (меню, клавиши, подсказки строки состояния; нужен `pefile`) и из
+  меню, снятых с работающей 1С (`docs/menus_live.json`): так у каждой команды указан режим
+  (Предприятие / Конфигуратор / Монитор) и источник (DLL и номер меню-ресурса). Меню снимает
+  `python docs/menu_dump.py <pid> <метка> docs/menus_live.json` — с тест-базы в каждом режиме и с копии
+  Clinic через OLE (`VK\1duckdb\ClinicTest\clinic_menus.py`: документ, журналы);
 - `1CTestBase\run_mcp.ps1 -NoClient -Keep` оставляет тестовую 1С с сервером работать (для ручной
   проверки или Claude Code), `run_mcp.ps1 -Stop` её закрывает. Скрипт закрывает **только** процессы
   1С, запущенные на этой тест-базе (по командной строке); другие открытые сеансы 1С не трогаются.
