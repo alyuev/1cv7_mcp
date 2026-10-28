@@ -2,10 +2,11 @@
 """MCP client test against a running 1C with 1cmcp started (see test_mcp_module.txt).
 Usage: python mcp_client_test.py [url] [token]
 Prints PASS/FAIL lines and RESULT: OK/FAIL."""
-import json, sys, time, urllib.request, urllib.error
+import json, os, re, sys, time, urllib.request, urllib.error
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18777/mcp"
 TOKEN = sys.argv[2] if len(sys.argv) > 2 else "test-token-0123456789"
+VERSION = re.search(r'#define MCP_VERSION "([^"]+)"', open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", "mcp_version.h")).read()).group(1)
 fails = 0
 rid = 0
 
@@ -54,7 +55,8 @@ check(st == 401, "wrong token -> 401", st)
 
 st, r = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                            "clientInfo": {"name": "pytest", "version": "1"}})
-check(st == 200 and r["result"]["serverInfo"]["name"] == "1cmcp", "initialize", r)
+check(st == 200 and r["result"]["serverInfo"]["name"] == "1cmcp" and r["result"]["serverInfo"]["version"] == VERSION,
+      "initialize, serverInfo.version = " + VERSION, r["result"]["serverInfo"] if st == 200 else r)
 print("   instructions:", r["result"].get("instructions", "")[-200:])
 
 st, r = rpc("tools/list")
@@ -63,7 +65,7 @@ check({"status", "screen", "eval", "run_code", "read_messages"} <= set(names), "
 
 err, t = tool("status")
 s = jtext(t)
-check(not err and s.get("state") == "idle", "status idle", t)
+check(not err and s.get("state") == "idle" and s.get("server") == "1cmcp " + VERSION, "status idle, same version", t)
 
 err, t = tool("eval", {"expression": "2*21"})
 check(not err and jtext(t).get("value") == "42", "eval 2*21", t)

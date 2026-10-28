@@ -8,6 +8,7 @@
 #include "mcp_core.h"
 #include "textconv.h"
 #include "mcp_page.h"
+#include "mcp_version.h"
 
 #ifndef HWND_MESSAGE
 #define HWND_MESSAGE ((HWND)-3)
@@ -485,7 +486,7 @@ class CMcpServerObj : public CContextImpl<CMcpServerObj> {
         return TRUE;
     }
     BL_FUNC(Version, "Версия", 0) {
-        setStr(retVal, "0.3.0");
+        setStr(retVal, MCP_VERSION);
         return TRUE;
     }
     // for tests: run a tool in-process exactly as an MCP call would (main thread)

@@ -60,7 +60,7 @@ foreach ($s in @('src\1cmcp.cpp','src\optpage.cpp','src\StdAfx.cpp')) { $fail +=
 if ($fail) { Pop-Location; Write-Host "Compile errors: $fail" -ForegroundColor Red; exit 1 }
 
 # version + "\0sd" resources (1C 7.7 unloads a component DLL without them) + options page dialog
-$o = & "$common\MSDev98\Bin\RC.EXE" /i "$vc\Include" /i "$vc\MFC\Include" /i 'src' /fo 'obj\1cmcp.res' 'src\1cmcp.rc' 2>&1
+$o = & "$common\MSDev98\Bin\RC.EXE" /i "$vc\Include" /i "$vc\MFC\Include" /i 'src' /i 'core' /fo 'obj\1cmcp.res' 'src\1cmcp.rc' 2>&1
 if ($LASTEXITCODE -ne 0) { $o | ForEach-Object { Write-Host $_ }; Pop-Location; Write-Host "RC failed." -ForegroundColor Red; exit 1 }
 
 # link cwd = project dir so the relative lib pragmas in StdAfx.cpp resolve

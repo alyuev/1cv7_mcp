@@ -13,7 +13,7 @@
 #define SO_EXCLUSIVEADDRUSE ((int)(~SO_REUSEADDR))
 #endif
 
-#define MCP_VERSION "0.1.0"
+#include "mcp_version.h"
 #define MAX_HEADER (32 * 1024)
 #define MAX_BODY (8 * 1024 * 1024)
 #define MAX_CONNS 32

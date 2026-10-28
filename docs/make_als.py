@@ -2,9 +2,11 @@
 """Build 1cmcp.als (syntax helper of the 1C 7.7 Configurator) from the texts below.
 Output: CP1251, CRLF, quotes doubled - same format as 1sqlite.als / FormEx.als.
 Usage: python docs/make_als.py [out.als]   (default: 1cmcp.als in the project root)"""
-import os, sys
+import os, re, sys
 
 G = "1cmcp"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VERSION = re.search(r'#define MCP_VERSION "([^"]+)"', open(os.path.join(ROOT, "core", "mcp_version.h")).read()).group(1)
 
 
 def q(s):
@@ -15,7 +17,7 @@ def item(ru, en, ins_ru, ins_en, text, ind="   "):
     # Texts are written with plain quotes; q() doubles them as the .als format requires.
     # In code examples a 1C string literal is Q1...Q1 and a quote inside it is QQ:
     # Q1{QQaQQ}Q1 -> "{""a""}" in 1C -> doubled again by q().
-    t = text.strip("\n").replace("QQ", '""').replace("Q1", '"').replace("Qeval1Q", '"eval"').replace("Q", '"')
+    t = text.strip("\n").replace("%VERSION%", VERSION).replace("QQ", '""').replace("Q1", '"').replace("Qeval1Q", '"eval"').replace("Q", '"')
     return "%s{\"Item\",%s,%s,%s,%s,%s,\n%s\n%s}," % (ind, q(G), q(ru), q(en), q(ins_ru), q(ins_en), q(t), ind)
 
 
@@ -26,7 +28,7 @@ def folder(title, items, ind=" "):
 overview = [
     item("Обзор", "", "MCP-сервер для ИИ-агентов внутри 1С:Предприятие 7.7", "", """
 @Версия:
-0.3.0
+%VERSION%
 @Описание:
 Нативная внешняя компонента (в стиле 1С++, без регистрации COM) для 1С:Предприятие 7.7.
 Поднимает внутри процесса 1cv7.exe HTTP-сервер по протоколу MCP (Model Context Protocol,
@@ -175,7 +177,8 @@ methods = [
 @Синтаксис:
 Версия()
 @Возвращаемое значение:
-Строка. Версия компоненты, например "0.3.0".
+Строка. Версия компоненты, например "%VERSION%". Она же видна на вкладке
+"MCP-сервер" и в ответе status/serverInfo агенту.
 """),
     item("ВыполнитьИнструмент", "RunTool", "ВыполнитьИнструмент(<?>,)", "RunTool(<?>,)", """
 @Синтаксис:
@@ -267,8 +270,7 @@ body = "{\"Shell\",\n" + folder("1cmcp (MCP-сервер для 1С 7.7)", overv
     folder("Инструменты MCP (для ИИ-агента)", tools, "  "),
 ]) + "\n}\n"
 
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "1cmcp.als")
+out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "1cmcp.als")
 with open(out, "wb") as f:
     f.write(body.replace("\r\n", "\n").replace("\n", "\r\n").encode("cp1251"))
 print("written", out, len(body), "chars")

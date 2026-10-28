@@ -6,6 +6,7 @@
 #include "StdAfx.h"
 #include "mcp_page.h"
 #include "resource.h"
+#include "mcp_version.h"
 
 // {6E1C3A1D-9B7F-4C1E-A6B2-1C0D0E0F4D50}
 static const GUID GUID_McpPage = {0x6e1c3a1d, 0x9b7f, 0x4c1e, {0xa6, 0xb2, 0x1c, 0x0d, 0x0e, 0x0f, 0x4d, 0x50}};
@@ -139,6 +140,7 @@ class CMcpOptPage : public IPropertyPage {
         CheckDlgButton(m_hwnd, IDC_ALLOWCODE, s.allowCode ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(m_hwnd, IDC_AUTOSTART, s.autoStart ? BST_CHECKED : BST_UNCHECKED);
         SetDlgItemTextA(m_hwnd, IDC_INIPATH, "Файл настроек: " + McpSettingsPath());
+        SetDlgItemTextA(m_hwnd, IDC_VERSION, "Версия компоненты: 1cmcp " MCP_VERSION);
         m_filling = FALSE;
         m_dirty = FALSE;
         UpdateStatus();

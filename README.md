@@ -114,6 +114,8 @@ powershell -NoProfile -File build.ps1
 
 ## Структура
 
+- `core\mcp_version.h` — **единственное место с версией**: из него её берут MCP (`serverInfo`,
+  `status`), `Версия()`, вкладка настроек, ресурс версии DLL и `docs\make_als.py`;
 - `core\` — JSON, HTTP-сервер на Winsock, MCP, очередь задач (UTF-8, без MFC и 1С);
 - `src\` — компонента 1С: служебное окно в главном потоке, выполнение модуля, окно сообщений,
   страница настроек `optpage.cpp` (CP1251);

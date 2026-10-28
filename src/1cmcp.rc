@@ -1,9 +1,10 @@
 #include <windows.h>
 #include <winver.h>
 #include "resource.h"
+#include "mcp_version.h"
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,3,0,1
- PRODUCTVERSION 0,3,0,1
+ FILEVERSION MCP_VERSION_RC
+ PRODUCTVERSION MCP_VERSION_RC
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x4L
@@ -14,12 +15,12 @@ BEGIN
     BEGIN
         BLOCK "041904e3"
         BEGIN
-            VALUE "FileDescription", "1cmcp - MCP server for 1C:Enterprise 7.7 (0.3.0.1)\0"
-            VALUE "FileVersion", "0,3,0,1\0"
+            VALUE "FileDescription", "1cmcp - MCP server for 1C:Enterprise 7.7\0"
+            VALUE "FileVersion", MCP_VERSION_FULL
             VALUE "InternalName", "1cmcp.dll\0"
             VALUE "OriginalFilename", "1cmcp.dll\0"
             VALUE "ProductName", "1cmcp\0"
-            VALUE "ProductVersion", "0.3.0.1\0"
+            VALUE "ProductVersion", MCP_VERSION
         END
     END
     BLOCK "VarFileInfo"
@@ -36,7 +37,7 @@ END
 LANGUAGE LANG_RUSSIAN, SUBLANG_DEFAULT
 #pragma code_page(1251)
 
-IDD_MCP_PAGE DIALOG DISCARDABLE  0, 0, 262, 226
+IDD_MCP_PAGE DIALOG DISCARDABLE  0, 0, 262, 236
 STYLE DS_CONTROL | DS_3DLOOK | WS_CHILD
 FONT 8, "MS Sans Serif"
 BEGIN
@@ -60,4 +61,5 @@ BEGIN
     PUSHBUTTON      "Запустить",IDC_STARTSTOP,10,184,62,14
     PUSHBUTTON      "Копировать команду для Claude Code",IDC_COPYCMD,78,184,136,14
     LTEXT           "",IDC_INIPATH,6,210,252,12
+    LTEXT           "",IDC_VERSION,6,222,252,10
 END

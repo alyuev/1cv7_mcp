@@ -3,7 +3,7 @@
 Opens the options dialog through the main menu, selects the last tab, saves a screenshot,
 lists the page controls through the MCP 'screen' tool and closes the dialog with 'Отмена'.
 Usage: python page_test.py <screenshot.png> <path to 1cmcp.ini>"""
-import json, sys, time, ctypes, urllib.request
+import json, os, re, sys, time, ctypes, urllib.request
 import win32gui, win32con, win32process
 from PIL import ImageGrab
 
@@ -12,6 +12,7 @@ TOKEN = "test-token-0123456789"
 out_png = sys.argv[1] if len(sys.argv) > 1 else "options_page.png"
 INI = sys.argv[2] if len(sys.argv) > 2 else ""
 rid = 0
+VERSION = re.search(r'#define MCP_VERSION "([^"]+)"', open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", "mcp_version.h")).read()).group(1)
 
 
 def tool(name, args=None):
@@ -95,6 +96,8 @@ print("status text:", status)
 # the test base starts the server from code (port 18777, test token) - not with the saved settings:
 # the page must say so, and the copied command must point at the running server
 note_ok = "18777" in status and "другими параметрами" in status
+ver_ok = ("Версия компоненты: 1cmcp " + VERSION) in texts
+print("version on the page:", ver_ok, VERSION)
 print("mismatch explained:", note_ok)
 import win32clipboard
 win32gui.PostMessage(win32gui.GetDlgItem(win32gui.GetParent(ctrls_first(dlg, 3110)), 3110), win32con.BM_CLICK, 0, 0)
@@ -104,7 +107,7 @@ cmd = win32clipboard.GetClipboardData(win32con.CF_TEXT).decode("cp1251")
 win32clipboard.CloseClipboard()
 print("copied command:", cmd)
 cmd_ok = "127.0.0.1:18777/mcp" in cmd and "Bearer " + TOKEN in cmd
-ok = ok and note_ok and cmd_ok
+ok = ok and note_ok and cmd_ok and ver_ok
 
 # --- Apply: type new port/token into the page, press "Применить", expect ini + restarted server
 ctrls = {}
