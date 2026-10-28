@@ -1,0 +1,13 @@
+// resource.h - dialog of the "MCP" page in Service -> Options
+#define IDD_MCP_PAGE 3100
+#define IDC_PORT 3101
+#define IDC_ADDR 3102
+#define IDC_TOKEN 3103
+#define IDC_GEN 3104
+#define IDC_COPY 3105
+#define IDC_ALLOWCODE 3106
+#define IDC_AUTOSTART 3107
+#define IDC_STATUS 3108
+#define IDC_STARTSTOP 3109
+#define IDC_COPYCMD 3110
+#define IDC_INIPATH 3111

@@ -1,0 +1,2 @@
+# keep bytes as is: sources are CP1251/UTF-8 with mixed line ends, .ert/.DBF are binary
+* -text

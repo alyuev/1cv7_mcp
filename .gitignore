@@ -1,0 +1,11 @@
+# build output
+build/
+obj/
+
+# test base runtime files (recreated by 1C / run_mcp.ps1)
+1CTestBase/1cmcp.dll
+1CTestBase/1cmcp.ini
+1CTestBase/test_log.txt
+1CTestBase/SYSLOG/
+1CTestBase/1SUSERS.DBF
+1CTestBase/*.LCK
