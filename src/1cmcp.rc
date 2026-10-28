@@ -37,11 +37,11 @@ END
 LANGUAGE LANG_RUSSIAN, SUBLANG_DEFAULT
 #pragma code_page(1251)
 
-IDD_MCP_PAGE DIALOG DISCARDABLE  0, 0, 262, 236
+IDD_MCP_PAGE DIALOG DISCARDABLE  0, 0, 262, 248
 STYLE DS_CONTROL | DS_3DLOOK | WS_CHILD
 FONT 8, "MS Sans Serif"
 BEGIN
-    GROUPBOX        "Сервер MCP для ИИ-агентов",-1,4,2,254,112
+    GROUPBOX        "Сервер MCP для ИИ-агентов",-1,4,2,254,124
     LTEXT           "Порт:",-1,10,17,24,8
     EDITTEXT        IDC_PORT,36,15,36,12,ES_AUTOHSCROLL | ES_NUMBER
     LTEXT           "Адрес:",-1,82,17,26,8
@@ -54,14 +54,16 @@ BEGIN
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,67,240,10
     CONTROL         "Запускать сервер при загрузке компоненты",IDC_AUTOSTART,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,80,240,10
+    CONTROL         "Подсвечивать действия ИИ на формах (рамка вокруг элемента)",IDC_HIGHLIGHT,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,93,240,10
     LTEXT           "Адрес 127.0.0.1 - только эта машина. Токен обязателен всегда (не короче 16 символов).",
-                    -1,10,94,240,16
-    GROUPBOX        "Состояние",-1,4,118,254,88
-    LTEXT           "",IDC_STATUS,10,130,240,48
-    PUSHBUTTON      "Запустить",IDC_STARTSTOP,10,184,62,14
-    PUSHBUTTON      "Копировать команду для Claude Code",IDC_COPYCMD,78,184,136,14
-    LTEXT           "",IDC_INIPATH,6,210,252,12
-    LTEXT           "",IDC_VERSION,6,222,252,10
+                    -1,10,106,240,16
+    GROUPBOX        "Состояние",-1,4,130,254,88
+    LTEXT           "",IDC_STATUS,10,142,240,48
+    PUSHBUTTON      "Запустить",IDC_STARTSTOP,10,196,62,14
+    PUSHBUTTON      "Копировать команду для Claude Code",IDC_COPYCMD,78,196,136,14
+    LTEXT           "",IDC_INIPATH,6,222,252,12
+    LTEXT           "",IDC_VERSION,6,234,252,10
 END
 
 // code of the MCP tool "metadata" (1C 7.7 module text, CP1251)

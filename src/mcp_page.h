@@ -9,6 +9,7 @@ struct McpSettings {
     CString token;  // required, see McpTokenProblem
     BOOL allowCode;
     BOOL autoStart;
+    BOOL highlight;  // frame around the controls/forms the agent acts on
 };
 
 extern HINSTANCE g_hInstDll;

@@ -139,6 +139,7 @@ class CMcpOptPage : public IPropertyPage {
         SetDlgItemTextA(m_hwnd, IDC_TOKEN, s.token);
         CheckDlgButton(m_hwnd, IDC_ALLOWCODE, s.allowCode ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(m_hwnd, IDC_AUTOSTART, s.autoStart ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(m_hwnd, IDC_HIGHLIGHT, s.highlight ? BST_CHECKED : BST_UNCHECKED);
         SetDlgItemTextA(m_hwnd, IDC_INIPATH, "Файл настроек: " + McpSettingsPath());
         SetDlgItemTextA(m_hwnd, IDC_VERSION, "Версия компоненты: 1cmcp " MCP_VERSION);
         m_filling = FALSE;
@@ -161,6 +162,7 @@ class CMcpOptPage : public IPropertyPage {
         s.token.TrimRight();
         s.allowCode = IsDlgButtonChecked(m_hwnd, IDC_ALLOWCODE) == BST_CHECKED;
         s.autoStart = IsDlgButtonChecked(m_hwnd, IDC_AUTOSTART) == BST_CHECKED;
+        s.highlight = IsDlgButtonChecked(m_hwnd, IDC_HIGHLIGHT) == BST_CHECKED;
     }
     void SetDirty() {
         if(m_filling) return;
@@ -228,6 +230,7 @@ class CMcpOptPage : public IPropertyPage {
                 break;
             case IDC_ALLOWCODE:
             case IDC_AUTOSTART:
+            case IDC_HIGHLIGHT:
                 if(code == BN_CLICKED) SetDirty();
                 break;
             case IDC_GEN:

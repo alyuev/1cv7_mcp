@@ -40,6 +40,12 @@ bool McpSystemCommand(long code, const McpForm* f, std::string& err);
 // cells of a table document window (moxel, CSheetDoc): rows [from, from+max) as arrays of strings
 // call a procedure/function of the form module by name (also without Экспорт); args: JSON array
 bool McpCallFormProc(const McpForm& f, const std::string& name, const JVal& args, JVal& out, std::string& err);
+// highlight: show the user where the agent acts (frame around a window / colour of a control)
+extern bool g_mcpHighlight;  // setting: highlight agent actions
+void McpFlashWnd(HWND target, COLORREF col, int ms, int thick);
+// control "" = the whole form; mode "frame" (default) or "color" (FormEx way)
+bool McpHighlight(const McpForm& f, const std::string& control, const std::string& mode, int ms, JVal& info,
+                  std::string& err);
 bool McpReadTable(const McpForm& f, int fromRow, int maxRows, int maxCols, JVal& out, std::string& err);
 
 #endif

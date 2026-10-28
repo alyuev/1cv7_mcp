@@ -696,6 +696,20 @@ JVal McpServer::ToolsList() {
                    p, NULL, true));
 
     p = JVal::object();
+    p.set("form", Prop("string", "Форма: номер из forms, hwnd или часть заголовка. По умолчанию активная."));
+    p.set("control", Prop("string", "Элемент: идентификатор, надпись или id из form_controls. Пусто - вся форма."));
+    p.set("mode", Prop("string", "frame (по умолчанию) - красная рамка вокруг элемента, работает для любых "
+                                 "элементов; color - подкрасить сам элемент, как ЦветФона в FormEx."));
+    p.set("seconds", Prop("number", "Сколько секунд держать подсветку (по умолчанию 2, максимум 30)."));
+    AddWaitProps(p);
+    list.push(Tool("highlight", "Показать элемент",
+                   "Подсвечивает элемент формы или всю форму, чтобы показать пользователю, о чём речь "
+                   "(\"вот это поле\"). Действия агента подсвечиваются и сами: press_button - красная рамка "
+                   "вокруг кнопки, run_code с form, call_form_procedure, read_table, open_object - синяя рамка "
+                   "вокруг формы.",
+                   p, NULL, true));
+
+    p = JVal::object();
     AddWaitProps(p);
     list.push(Tool("forms", "Открытые формы",
                    "Список открытых окон-форм 1С (сверху активная): номер, заголовок, вид (Документ, Справочник, "
@@ -758,7 +772,7 @@ JVal McpServer::CallTool(const std::string& name, const JVal& args, bool& isErro
         if(!m_cfg.allowCode) { isError = true; text = "нажатие кнопок и команды запрещены в настройках компоненты"; }
         else text = Run1C(name, args, isError, pending);
     } else if(name == "read_messages" || name == "clear_messages" || name == "forms" || name == "form_controls" ||
-              name == "metadata" || name == "read_table" || name == "object_id")
+              name == "metadata" || name == "read_table" || name == "object_id" || name == "highlight")
         text = Run1C(name, args, isError, pending);
     else
         return JVal();

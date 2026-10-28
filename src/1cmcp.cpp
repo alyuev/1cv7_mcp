@@ -202,10 +202,29 @@ class CMcpHost : public McpHost {
                     return false;
                 }
                 fm = McpFormModule(f);
+                McpFlashWnd(f.frame, RGB(30, 120, 230), 1500, 4);
             }
             return RunModule(Utf8ToCp1251(args.get("code").asStr()), 0, text, ctx, fm);
         }
         if(tool == "metadata") return Metadata(args, text);
+        if(tool == "highlight") {
+            McpForm f;
+            std::string err;
+            JVal r = JVal::object();
+            if(!McpFindForm(args, f, err)) {
+                text = Error(err);
+                return false;
+            }
+            r.set("form", McpFormJson(f));
+            const JVal& ctl = args.get("control");
+            std::string cs = ctl.isNum() ? NumStr(ctl.asNum()) : ctl.asStr();
+            double sec = args.get("seconds").asNum(2);
+            if(sec > 30) sec = 30;
+            bool ok = McpHighlight(f, cs, args.get("mode").asStr(), (int)(sec * 1000), r, err);
+            if(!ok) r.set("error", JVal::string(err));
+            text = r.dump();
+            return ok;
+        }
         if(tool == "open_object") {
             std::string id = Trim(Utf8ToCp1251(args.get("id").asStr())), in;
             if(!IdToInternal(id, in)) {
@@ -242,6 +261,11 @@ class CMcpHost : public McpHost {
             r.set("type", JVal::string(Cp1251ToUtf8(v.substr(0, sep))));
             r.set("presentation", JVal::string(Cp1251ToUtf8(sep == std::string::npos ? "" : v.substr(sep + 1))));
             r.set("opened", JVal::boolean(open));
+            if(open) {
+                McpForm nf;
+                std::string e2;
+                if(McpFindForm(JVal::object(), nf, e2)) McpFlashWnd(nf.frame, RGB(30, 120, 230), 1500, 4);
+            }
             if(rr.has("messages")) r.set("messages", rr.get("messages"));
             text = r.dump();
             return true;
@@ -299,6 +323,7 @@ class CMcpHost : public McpHost {
                 return false;
             }
             r.set("form", McpFormJson(f));
+            McpFlashWnd(f.frame, RGB(30, 120, 230), 1200, 4);
             bool ok = McpReadTable(f, (int)args.get("from_row").asNum(1), (int)args.get("max_rows").asNum(200),
                                    (int)args.get("max_columns").asNum(50), r, err);
             if(!ok) r.set("error", JVal::string(err));
@@ -331,6 +356,7 @@ class CMcpHost : public McpHost {
             bool ok;
             if(tool == "call_form_procedure") {
                 r.set("form", McpFormJson(f));
+                McpFlashWnd(f.frame, RGB(30, 120, 230), 1500, 4);
                 ok = McpCallFormProc(f, args.get("name").asStr(), args.get("args"), r, err);
             } else if(tool == "press_button") {
                 r.set("form", McpFormJson(f));
@@ -581,6 +607,7 @@ void McpLoadSettings(McpSettings& s) {
     s.token.Empty();
     s.allowCode = TRUE;
     s.autoStart = FALSE;
+    s.highlight = TRUE;
     CString p = McpSettingsPath();
     if(p.IsEmpty()) return;
     char buf[512];
@@ -591,6 +618,8 @@ void McpLoadSettings(McpSettings& s) {
     s.token = buf;
     s.allowCode = GetPrivateProfileIntA("Server", "AllowCode", 1, p) != 0;
     s.autoStart = GetPrivateProfileIntA("Server", "AutoStart", 0, p) != 0;
+    s.highlight = GetPrivateProfileIntA("Server", "Highlight", 1, p) != 0;
+    g_mcpHighlight = s.highlight != 0;  // what is in the file is what is shown
 }
 
 BOOL McpSaveSettings(const McpSettings& s) {
@@ -602,7 +631,9 @@ BOOL McpSaveSettings(const McpSettings& s) {
            WritePrivateProfileStringA("Server", "Address", s.addr, p) &&
            WritePrivateProfileStringA("Server", "Token", s.token, p) &&
            WritePrivateProfileStringA("Server", "AllowCode", s.allowCode ? "1" : "0", p) &&
-           WritePrivateProfileStringA("Server", "AutoStart", s.autoStart ? "1" : "0", p);
+           WritePrivateProfileStringA("Server", "AutoStart", s.autoStart ? "1" : "0", p) &&
+           (g_mcpHighlight = s.highlight != 0, 1) &&
+           WritePrivateProfileStringA("Server", "Highlight", s.highlight ? "1" : "0", p);
 }
 
 BOOL McpServerStart(const McpSettings& s, CString& err) {

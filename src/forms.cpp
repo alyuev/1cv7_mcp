@@ -202,6 +202,7 @@ static HWND CtrlWnd(const McpForm& f, UINT id) {
 struct McpCtrl {
     UINT id;
     HWND wnd;
+    CControlID* ctl;
     CString cls, title, name, formula, layer;
 };
 
@@ -215,6 +216,7 @@ static void Controls(const McpForm& f, std::vector<McpCtrl>& out) {
         if(!c) continue;
         McpCtrl m;
         m.id = c->m_CtrlID;
+        m.ctl = c;
         m.wnd = CtrlWnd(f, m.id);
         m.cls = m.wnd ? ClassOf(m.wnd) : CString("");
         m.title = c->m_Title ? c->m_Title : "";
@@ -292,6 +294,186 @@ static void Activate(const McpForm& f) {
     }
 }
 
+// ---------------------------------------------------------------- highlight
+// Shows the user where the agent acts. Two ways:
+//  frame - four thin popup windows around the target (owned by the 1C main window, no activation).
+//          Touches nothing inside 1C, so it works for any control and for whole forms.
+//  color - FormEx's way (AttribEx.cpp, ÷вет‘она): CControlID::SetBkColor + for 1C's own controls
+//          (1CEDIT) the colour in the window's private data GetWindowLong(hwnd, 0)[0]. That private
+//          data exists only in 1C's control classes - for "Button" and others it is NOT written.
+// Both are undone by a thread timer (also fires inside modal loops).
+bool g_mcpHighlight = true;
+
+#ifndef WS_EX_NOACTIVATE
+#define WS_EX_NOACTIVATE 0x08000000L
+#endif
+
+struct HlItem {
+    UINT timer;
+    HWND strips[4];
+    HWND frame;        // form frame: the colour is restored only while the form is alive
+    CControlID* ctl;   // color mode
+    HWND wnd;
+    unsigned long oldBk;
+    DWORD oldData0;
+    bool data0;
+};
+static std::vector<HlItem> g_hl;
+
+static LRESULT CALLBACK StripProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    if(msg == WM_ERASEBKGND) {
+        RECT r;
+        GetClientRect(h, &r);
+        HBRUSH b = CreateSolidBrush((COLORREF)GetWindowLong(h, GWL_USERDATA));
+        FillRect((HDC)wp, &r, b);
+        DeleteObject(b);
+        return 1;
+    }
+    if(msg == WM_NCHITTEST) return HTTRANSPARENT;
+    return DefWindowProc(h, msg, wp, lp);
+}
+
+static void HlUndo(HlItem& it) {
+    for(int i = 0; i < 4; i++)
+        if(it.strips[i] && IsWindow(it.strips[i])) DestroyWindow(it.strips[i]);
+    if(it.ctl && it.frame && IsWindow(it.frame) && it.wnd && IsWindow(it.wnd)) {
+        it.ctl->SetBkColor(it.oldBk);
+        if(it.data0) {
+            DWORD* ud = (DWORD*)GetWindowLong(it.wnd, 0);
+            if(ud) ud[0] = it.oldData0;
+        }
+        RedrawWindow(it.wnd, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    }
+}
+
+static VOID CALLBACK HlTimer(HWND, UINT, UINT id, DWORD) {
+    KillTimer(NULL, id);
+    for(size_t i = 0; i < g_hl.size(); i++)
+        if(g_hl[i].timer == id) {
+            HlUndo(g_hl[i]);
+            g_hl.erase(g_hl.begin() + i);
+            break;
+        }
+}
+
+static HWND Strip(int x, int y, int w, int h, COLORREF col, HWND owner) {
+    static bool reg = false;
+    extern HINSTANCE g_hInstDll;
+    if(!reg) {
+        WNDCLASSA wc;
+        memset(&wc, 0, sizeof(wc));
+        wc.lpfnWndProc = StripProc;
+        wc.hInstance = g_hInstDll;
+        wc.lpszClassName = "1cmcpHighlight";
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        RegisterClassA(&wc);
+        reg = true;
+    }
+    HWND s = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, "1cmcpHighlight", "", WS_POPUP, x, y, w, h, owner,
+                             NULL, g_hInstDll, NULL);
+    if(s) {
+        SetWindowLong(s, GWL_USERDATA, (LONG)col);
+        SetWindowPos(s, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        UpdateWindow(s);
+    }
+    return s;
+}
+
+static void HlAdd(HlItem& it, int ms) {
+    it.timer = SetTimer(NULL, 0, ms < 200 ? 200 : ms, HlTimer);
+    g_hl.push_back(it);
+}
+
+void McpFlashWnd(HWND target, COLORREF col, int ms, int thick) {
+    if(!g_mcpHighlight || !target || !IsWindow(target) || !IsWindowVisible(target)) return;
+    CMDIFrameWnd* mf = GetMainFrame();
+    HWND owner = mf ? mf->m_hWnd : NULL;
+    RECT r;
+    GetWindowRect(target, &r);
+    InflateRect(&r, thick + 1, thick + 1);
+    HlItem it;
+    memset(&it, 0, sizeof(it));
+    int w = r.right - r.left, h = r.bottom - r.top;
+    it.strips[0] = Strip(r.left, r.top, w, thick, col, owner);
+    it.strips[1] = Strip(r.left, r.bottom - thick, w, thick, col, owner);
+    it.strips[2] = Strip(r.left, r.top, thick, h, col, owner);
+    it.strips[3] = Strip(r.right - thick, r.top, thick, h, col, owner);
+    HlAdd(it, ms);
+}
+
+static bool HlColor(const McpForm& f, const McpCtrl& m, COLORREF col, int ms) {
+    if(!m.ctl || !m.wnd) return false;
+    HlItem it;
+    memset(&it, 0, sizeof(it));
+    it.frame = f.frame;
+    it.ctl = m.ctl;
+    it.wnd = m.wnd;
+    it.oldBk = m.ctl->GetBkColor();
+    m.ctl->SetBkColor(col);
+    if(m.cls == "1CEDIT") {  // FormEx: 1C's own control keeps its colours in the private data
+        DWORD* ud = (DWORD*)GetWindowLong(m.wnd, 0);
+        if(ud) {
+            it.data0 = true;
+            it.oldData0 = ud[0];
+            ud[0] = col;
+        }
+    }
+    RedrawWindow(m.wnd, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    HlAdd(it, ms);
+    return true;
+}
+
+static const McpCtrl* FindControl(const std::vector<McpCtrl>& v, const std::string& button) {
+    CString want = Fold(Utf8ToCp1251(button).c_str());
+    UINT wantId = (UINT)atoi(button.c_str());
+    const McpCtrl* hit = NULL;
+    for(int pass = 0; pass < 3 && !hit; pass++) {
+        for(size_t i = 0; i < v.size() && !hit; i++) {
+            const McpCtrl& m = v[i];
+            if(pass == 0 && wantId && m.id == wantId) hit = &m;
+            if(pass == 1 && !m.name.IsEmpty() && Fold(m.name) == want) hit = &m;
+            if(pass == 2 && !m.title.IsEmpty() && Fold(m.title) == want) hit = &m;
+        }
+    }
+    return hit;
+}
+
+bool McpHighlight(const McpForm& f, const std::string& control, const std::string& mode, int ms, JVal& info,
+                  std::string& err) {
+    if(control.empty()) {  // the whole form; an explicit request shows even with the setting off
+        bool saved = g_mcpHighlight;
+        g_mcpHighlight = true;
+        McpFlashWnd(f.frame, RGB(30, 120, 230), ms, 4);
+        g_mcpHighlight = saved;
+        info.set("target", JVal::string("form"));
+        return true;
+    }
+    std::vector<McpCtrl> v;
+    Controls(f, v);
+    const McpCtrl* hit = FindControl(v, control);
+    if(!hit || !hit->wnd) {
+        err = Cp1251ToUtf8("на форме нет элемента \"") + control + Cp1251ToUtf8("\" (см. form_controls)");
+        return false;
+    }
+    info.set("id", JVal::number(hit->id));
+    info.set("class", JVal::string(U(hit->cls)));
+    // the FormEx colour shows only on 1C's own fields (1CEDIT); a standard Button/checkbox ignores
+    // CControlID's colour (checked on the test base) - those get the frame
+    if(mode == "color" && hit->cls == "1CEDIT") {
+        HlColor(f, *hit, RGB(255, 220, 60), ms);
+        info.set("mode", JVal::string("color"));
+    } else {
+        if(mode == "color")
+            info.set("note", JVal::string(Cp1251ToUtf8("цвет виден только у полей ввода, показана рамка")));
+        bool saved = g_mcpHighlight;
+        g_mcpHighlight = true;
+        McpFlashWnd(hit->wnd, RGB(230, 40, 40), ms, 3);
+        g_mcpHighlight = saved;
+        info.set("mode", JVal::string("frame"));
+    }
+    return true;
+}
+
 bool McpPressButton(const McpForm& f, const std::string& button, std::string& err, JVal& info) {
     std::vector<McpCtrl> v;
     Controls(f, v);
@@ -329,6 +511,7 @@ bool McpPressButton(const McpForm& f, const std::string& button, std::string& er
         return false;
     }
     Activate(f);
+    McpFlashWnd(hit->wnd, RGB(230, 40, 40), 1500, 3);  // visible while the formula runs and a bit after
     // BM_CLICK = mouse down/up on the button: 1C sees a real click (a checkbox toggles too)
     // and runs the formula right here, inside this call
     if(afx)  // not a Windows button: notify the dialog the way a button does, 1C runs the formula
