@@ -634,6 +634,18 @@ JVal McpServer::ToolsList() {
                        p, "name", false));
 
         p = JVal::object();
+        p.set("id", Prop("string", "ИД объекта: O/<вид>/<код> - документ, B/<вид>/<код> - элемент справочника; "
+                                   "код базы УРБД в скобках: O/1102/(ACC)8439502. Такой ИД даёт object_id."));
+        p.set("open", Prop("boolean", "Открыть форму объекта (по умолчанию true); false - только найти."));
+        AddWaitProps(p);
+        list.push(Tool("open_object", "Открыть объект по ИД",
+                       "Находит документ или элемент справочника по короткому ИД (строится из внутреннего "
+                       "представления значения ЗначениеВСтрокуВнутр: вид и код объекта, код базы УРБД) и "
+                       "открывает его форму. Возвращает тип (Документ.ПриходнаяНакладная) и представление. "
+                       "ИД в тексте пользователя вида O/.../... или B/.../... - это он.",
+                       p, "id", false));
+
+        p = JVal::object();
         p.set("code", Prop("number", "Код команды WM_COMMAND, например 57603 (Сохранить), 32880 (Движения "
                                      "документа), 57600 (Новый). Коды со старшим битом от FormEx (99298) "
                                      "тоже принимаются."));
@@ -670,6 +682,17 @@ JVal McpServer::ToolsList() {
                    "печатная форма, Таблица.Показать()) - то, что видит пользователь. rows - массив строк, "
                    "каждая - массив текстов ячеек слева направо (пустые в конце строки отброшены); "
                    "номер строки = from_row + индекс. Большие таблицы читайте частями через next_from_row.",
+                   p, NULL, true));
+
+    p = JVal::object();
+    p.set("form", Prop("string", "Форма документа, справочника или журнала: ИД её текущего объекта (строки)."));
+    p.set("expression", Prop("string", "Или выражение 1С, дающее документ/элемент справочника "
+                                       "(например Константа.ОсновнаяФирма)."));
+    AddWaitProps(p);
+    list.push(Tool("object_id", "ИД объекта",
+                   "Короткий ИД документа (O/<вид>/<код>) или элемента справочника (B/<вид>/<код>, код "
+                   "базы УРБД в скобках) - текущего объекта открытой формы или значения выражения. "
+                   "По ИД объект открывает open_object.",
                    p, NULL, true));
 
     p = JVal::object();
@@ -729,12 +752,13 @@ JVal McpServer::CallTool(const std::string& name, const JVal& args, bool& isErro
     else if(name == "eval" || name == "run_code") {
         if(!m_cfg.allowCode) { isError = true; text = "выполнение кода запрещено в настройках компоненты"; }
         else text = Run1C(name, args, isError, pending);
-    } else if(name == "press_button" || name == "system_command" || name == "call_form_procedure") {
+    } else if(name == "press_button" || name == "system_command" || name == "call_form_procedure" ||
+              name == "open_object") {
         // a button formula or a command can do anything a user can: same switch as code
         if(!m_cfg.allowCode) { isError = true; text = "нажатие кнопок и команды запрещены в настройках компоненты"; }
         else text = Run1C(name, args, isError, pending);
     } else if(name == "read_messages" || name == "clear_messages" || name == "forms" || name == "form_controls" ||
-              name == "metadata" || name == "read_table")
+              name == "metadata" || name == "read_table" || name == "object_id")
         text = Run1C(name, args, isError, pending);
     else
         return JVal();

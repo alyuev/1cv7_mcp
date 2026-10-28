@@ -116,6 +116,26 @@ st, _ = call("status")
 if isinstance(st, dict) and st.get("modal"):  # "save changes?" - answer No
     call("dialog_button", button="Нет")
 
+code = ('Спр = СоздатьОбъект("Справочник.ТМЦ");\n'
+        'Если Спр.НайтиПоНаименованию("MCP тест") = 0 Тогда\n'
+        '    Спр.Новый();\n    Спр.Наименование = "MCP тест";\n    Спр.Записать();\nКонецЕсли;\n'
+        'Результат = ЗначениеВСтрокуВнутр(Спр.ТекущийЭлемент());')
+r, err = call("run_code", code=code)
+internal = r.get("result", {}).get("value", "") if isinstance(r, dict) else ""
+o, err = call("object_id", expression='ЗначениеИзСтрокиВнутр("%s")' % internal.replace('"', '""'))
+oid = o.get("id", "") if isinstance(o, dict) else ""
+check(not err and oid.startswith("B/") and oid.split("/")[-1].isalnum(), "object_id of an expression: B/<вид>/<код>", [internal, o])
+o, err = call("open_object", id=oid)
+check(not err and o.get("type") == "Справочник.ТМЦ" and o.get("presentation") == "MCP тест" and o.get("opened"),
+      "open_object finds and opens the item", o)
+o2, err = call("object_id")  # the opened item form is active
+check(not err and o2.get("id") == oid, "object_id of the opened item form = the same ID", [oid, o2])
+call("system_command", code=57602, wait_seconds=3)
+o, err = call("open_object", id="O/99999/123")
+check(err and "не найден" in o.get("error", ""), "open_object: unknown object", o)
+o, err = call("open_object", id="X/1/2")
+check(err and "O/" in o.get("error", ""), "open_object: bad ID format", o)
+
 m, err = call("metadata", kind="справочник", name="тмц")
 check(not err and isinstance(m, str) and m.startswith("Справочник.ТМЦ") and "ДатаСоздания" in m and "Дата" in m,
       "metadata: справочник ТМЦ with its attribute (kind/name case-insensitive)", m)

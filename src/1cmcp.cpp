@@ -122,6 +122,61 @@ static std::string ValueJson(const CValue& v, JVal& out) {
     return s;
 }
 
+
+// ---------------------------------------------------------------- object IDs "O/1102/(ACC)8439502"
+// Short ID of a document (O) or catalog item (B) built from the platform's internal value string
+// ЗначениеВСтрокуВнутр = {"O","0","0","<kind>","0","0","<10-char code><3-char УРБД code>"}:
+// <letter>/<kind>/[(<УРБД>)]<code>. Same scheme as глПолучитьИД / ОбъектПоСтрокеИД_МЛГ in Cactus.
+static std::string Trim(const std::string& s) {
+    size_t a = s.find_first_not_of(' '), b = s.find_last_not_of(' ');
+    return a == std::string::npos ? "" : s.substr(a, b - a + 1);
+}
+
+static bool InternalToId(const std::string& in, std::string& id) {
+    std::vector<std::string> f;
+    std::string cur;
+    bool q = false;
+    for(size_t i = 0; i < in.size(); i++) {
+        char ch = in[i];
+        if(ch == '"') { q = !q; continue; }
+        if(!q && (ch == '{' || ch == '}')) continue;
+        if(!q && ch == ',') { f.push_back(cur); cur.erase(); continue; }
+        cur += ch;
+    }
+    f.push_back(cur);
+    if(f.size() < 7 || (f[0] != "O" && f[0] != "B")) return false;
+    std::string s = f[6], kind = f[3], code;
+    std::string urbd = Trim(s.size() >= 3 ? s.substr(s.size() - 3) : "");
+    if(kind == "0") {  // a document taken from a journal: kind and code are both in the string
+        kind = Trim(s.substr(0, 10));
+        code = Trim(s.size() > 10 ? s.substr(10, 10) : "");
+    } else
+        code = Trim(s.substr(0, 10));
+    if(kind.empty() || code.empty()) return false;
+    id = f[0] + "/" + kind + "/" + (urbd.empty() ? "" : "(" + urbd + ")") + code;
+    return true;
+}
+
+static bool IdToInternal(const std::string& id, std::string& in) {
+    if(id.size() < 5 || (id[0] != 'O' && id[0] != 'B') || id[1] != '/') return false;
+    size_t s2 = id.find('/', 2);
+    if(s2 == std::string::npos) return false;
+    std::string kind = id.substr(2, s2 - 2), rest = id.substr(s2 + 1), urbd;
+    if(kind.empty() || kind.find_first_not_of("0123456789") != std::string::npos) return false;
+    if(!rest.empty() && rest[0] == '(') {
+        size_t e = rest.find(')');
+        if(e == std::string::npos) return false;
+        urbd = rest.substr(1, e - 1);
+        rest = rest.substr(e + 1);
+    }
+    if(rest.empty() || rest.size() > 10 || urbd.size() > 3) return false;
+    for(size_t i = 0; i < rest.size(); i++)
+        if(!isalnum((unsigned char)rest[i])) return false;
+    std::string code = std::string(10 - rest.size(), ' ') + rest + urbd + std::string(3 - urbd.size(), ' ');
+    in = std::string("{\"") + id[0] + "\",\"0\",\"0\",\"" + kind + "\",\"0\",\"0\",\"" + code + "\"}";
+    return true;
+}
+
 class CMcpHost : public McpHost {
   public:
     CMcpHost() : m_wnd(NULL), m_server(NULL) {}
@@ -151,6 +206,90 @@ class CMcpHost : public McpHost {
             return RunModule(Utf8ToCp1251(args.get("code").asStr()), 0, text, ctx, fm);
         }
         if(tool == "metadata") return Metadata(args, text);
+        if(tool == "open_object") {
+            std::string id = Trim(Utf8ToCp1251(args.get("id").asStr())), in;
+            if(!IdToInternal(id, in)) {
+                text = Error(Cp1251ToUtf8("ИД должен быть вида O/<вид>/<код> (документ) или B/<вид>/<код> "
+                                          "(элемент справочника), код УРБД в скобках: O/1102/(ACC)8439502"));
+                return false;
+            }
+            bool open = args.get("open").asBool(true);
+            std::string code = "Об = ЗначениеИзСтрокиВнутр(" + Lit(in) + ");\r\n"
+                "Если (ПустоеЗначение(Об) = 1) или (Найти(Строка(Об), \"Объект не найден\") > 0) или "
+                "(Найти(Строка(Об), \"Object is not found\") > 0) Тогда\r\n"
+                "    Результат = \"\";\r\n"
+                "Иначе\r\n"
+                "    Результат = ТипЗначенияСтр(Об) + \".\" + Об.Вид() + Симв(1) + Строка(Об);\r\n" +
+                std::string(open ? "    ОткрытьФорму(Об);\r\n" : "") +
+                "КонецЕсли;\r\n";
+            std::string json;
+            bool ok = RunModule(code, 0, json);
+            JVal r, rr;
+            std::string err;
+            if(!ok || !JVal::parse(json, rr, err)) {
+                text = json;
+                return false;
+            }
+            std::string v = Utf8ToCp1251(rr.get("result").get("value").asStr());
+            r = JVal::object();
+            r.set("id", JVal::string(Cp1251ToUtf8(id)));
+            if(v.empty()) {
+                r.set("error", JVal::string(Cp1251ToUtf8("объект с таким ИД не найден в этой базе")));
+                text = r.dump();
+                return false;
+            }
+            size_t sep = v.find('\1');
+            r.set("type", JVal::string(Cp1251ToUtf8(v.substr(0, sep))));
+            r.set("presentation", JVal::string(Cp1251ToUtf8(sep == std::string::npos ? "" : v.substr(sep + 1))));
+            r.set("opened", JVal::boolean(open));
+            if(rr.has("messages")) r.set("messages", rr.get("messages"));
+            text = r.dump();
+            return true;
+        }
+        if(tool == "object_id") {
+            // the value: an expression, or the current object of a form (document / catalog item / journal row)
+            std::string expr = Utf8ToCp1251(args.get("expression").asStr());
+            CBLContext* ctx = NULL;
+            CBLModule7* fm = NULL;
+            JVal formJson;
+            if(expr.empty()) {
+                McpForm f;
+                std::string err;
+                if(!McpFindForm(args, f, err)) {
+                    text = Error(err);
+                    return false;
+                }
+                if(f.kind == "Документ" || f.kind == "Журнал") expr = "ТекущийДокумент()";
+                else if(f.kind == "Справочник") expr = "ТекущийЭлемент()";
+                else {
+                    text = Error(Cp1251ToUtf8("у формы вида \"") + Cp1251ToUtf8((LPCSTR)f.kind) +
+                                 Cp1251ToUtf8("\" нет текущего объекта; передайте expression"));
+                    return false;
+                }
+                ctx = McpFormContext(f);
+                fm = McpFormModule(f);
+                formJson = McpFormJson(f);
+            }
+            std::string json;
+            bool ok = RunModule("Результат = ЗначениеВСтрокуВнутр(" + expr + ");\r\n", 0, json, ctx, fm);
+            JVal rr;
+            std::string err, id;
+            if(!ok || !JVal::parse(json, rr, err)) {
+                text = json;
+                return false;
+            }
+            JVal r = JVal::object();
+            if(!formJson.isNull()) r.set("form", formJson);
+            if(!InternalToId(Utf8ToCp1251(rr.get("result").get("value").asStr()), id)) {
+                r.set("error", JVal::string(Cp1251ToUtf8("значение не документ и не элемент справочника "
+                                                         "(или пустое)")));
+                text = r.dump();
+                return false;
+            }
+            r.set("id", JVal::string(Cp1251ToUtf8(id)));
+            text = r.dump();
+            return true;
+        }
         if(tool == "read_table") {
             McpForm f;
             std::string err;
