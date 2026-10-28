@@ -9,6 +9,7 @@
 #include "textconv.h"
 #include "mcp_page.h"
 #include "mcp_version.h"
+#include "forms.h"
 
 #ifndef HWND_MESSAGE
 #define HWND_MESSAGE ((HWND)-3)
@@ -134,7 +135,64 @@ class CMcpHost : public McpHost {
     virtual bool RunTool(const std::string& tool, const JVal& args, std::string& text) {
         if(tool == "eval")
             return RunModule("Результат = " + Utf8ToCp1251(args.get("expression").asStr()) + ";\r\n", 1, text);
-        if(tool == "run_code") return RunModule(Utf8ToCp1251(args.get("code").asStr()), 0, text);
+        if(tool == "run_code") {
+            CBLContext* ctx = NULL;
+            if(args.has("form") && !(args.get("form").isStr() && args.get("form").asStr().empty())) {
+                McpForm f;
+                std::string err;
+                if(!McpFindForm(args, f, err) || !(ctx = McpFormContext(f))) {
+                    if(err.empty()) err = Cp1251ToUtf8("у этого окна нет контекста формы (таблица/текст)");
+                    text = Error(err);
+                    return false;
+                }
+            }
+            return RunModule(Utf8ToCp1251(args.get("code").asStr()), 0, text, ctx);
+        }
+        if(tool == "metadata") return Metadata(args, text);
+        if(tool == "forms") {
+            JVal r = JVal::object();
+            r.set("forms", McpFormsJson());
+            text = r.dump();
+            return true;
+        }
+        if(tool == "form_controls" || tool == "press_button" || tool == "system_command") {
+            McpForm f;
+            std::string err;
+            bool needForm = tool != "system_command" || args.has("form");
+            if(needForm && !McpFindForm(args, f, err)) {
+                text = Error(err);
+                return false;
+            }
+            JVal r = JVal::object();
+            if(tool == "form_controls") {
+                r.set("form", McpFormJson(f));
+                r.set("controls", McpFormControls(f, args.get("values").asBool(true)));
+                text = r.dump();
+                return true;
+            }
+            int msgBefore = MsgLineCount();
+            bool ok;
+            if(tool == "press_button") {
+                r.set("form", McpFormJson(f));
+                JVal info = JVal::object();
+                ok = McpPressButton(f, args.get("button").isNum() ? NumStr(args.get("button").asNum()) : args.get("button").asStr(),
+                                    err, info);
+                r.set("button", info);
+            } else {
+                const JVal& c = args.get("code");
+                long code = c.isNum() ? (long)c.asNum() : atol(c.asStr().c_str());
+                ok = McpSystemCommand(code, needForm ? &f : NULL, err);
+                r.set("code", JVal::number(code));
+            }
+            if(!ok) r.set("error", JVal::string(err));
+            int msgAfter = MsgLineCount();
+            if(msgAfter > msgBefore) {
+                JVal lines = MsgLines(msgBefore, 200);
+                if(lines.size()) r.set("messages", lines);
+            }
+            text = r.dump();
+            return ok;
+        }
         if(tool == "read_messages") {
             JVal r = JVal::object();
             int total = MsgLineCount();
@@ -159,8 +217,55 @@ class CMcpHost : public McpHost {
         return false;
     }
 
+    // 1C string literal: "..." with doubled quotes
+    static std::string Lit(const std::string& s1251) {
+        std::string r = "\"";
+        for(size_t i = 0; i < s1251.size(); i++) {
+            if(s1251[i] == '"') r += '"';
+            if(s1251[i] != '\r' && s1251[i] != '\n') r += s1251[i];
+        }
+        return r + "\"";
+    }
+
+    // metadata.1c (RCDATA in this DLL) with the kind and name substituted; the text result is returned as is
+    bool Metadata(const JVal& args, std::string& text) {
+        HRSRC rs = FindResourceA(g_hInstDll, "METADATA1C", RT_RCDATA);
+        HGLOBAL hg = rs ? LoadResource(g_hInstDll, rs) : NULL;
+        if(!hg) {
+            text = Error("metadata.1c resource is missing");
+            return false;
+        }
+        std::string src((const char*)LockResource(hg), SizeofResource(g_hInstDll, rs));
+        std::string::size_type at = src.find("%ВИД%");
+        if(at != std::string::npos) src.replace(at, 5, Lit(Utf8ToCp1251(args.get("kind").asStr())));
+        at = src.find("%ИМЯ%");
+        if(at != std::string::npos) src.replace(at, 5, Lit(Utf8ToCp1251(args.get("name").asStr())));
+        std::string json;
+        bool ok = RunModule(src, 0, json);
+        JVal r;
+        std::string err;
+        if(ok && JVal::parse(json, r, err) && r.get("result").get("value").isStr())
+            text = r.get("result").get("value").asStr();
+        else
+            text = json;
+        return ok;
+    }
+
+    static std::string Error(const std::string& utf8) {
+        JVal r = JVal::object();
+        r.set("error", JVal::string(utf8));
+        return r.dump();
+    }
+    static std::string NumStr(double d) {
+        char buf[32];
+        sprintf(buf, "%ld", (long)d);
+        return buf;
+    }
+
     // Main thread only. offset = number of lines we prepend before the user code.
-    bool RunModule(const std::string& code1251, int isEval, std::string& text) {
+    // ctx: form context - the code is compiled in it, as if written in the form module
+    // (form attributes, Форма, Контекст are visible directly).
+    bool RunModule(const std::string& code1251, int isEval, std::string& text, CBLContext* ctx = NULL) {
         std::string src = "Перем Результат;\r\n";
         // normalise line ends to CRLF
         for(size_t i = 0; i < code1251.size(); i++) {
@@ -176,6 +281,7 @@ class CMcpHost : public McpHost {
         try {
             CBLModule7* gm = GetGlobalModule();
             if(gm) m->AssignFriendModule(gm);
+            if(ctx) m->AssignContext(ctx);
             m->AssignSource(src.c_str());
             if(!m->Compile()) {
                 if(m->m_err.IsEmpty()) m->m_err = "Ошибка компиляции";

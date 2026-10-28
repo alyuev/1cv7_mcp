@@ -63,3 +63,6 @@ BEGIN
     LTEXT           "",IDC_INIPATH,6,210,252,12
     LTEXT           "",IDC_VERSION,6,222,252,10
 END
+
+// code of the MCP tool "metadata" (1C 7.7 module text, CP1251)
+METADATA1C RCDATA "metadata.1c"

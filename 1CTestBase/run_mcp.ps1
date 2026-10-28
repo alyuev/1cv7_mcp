@@ -47,9 +47,11 @@ if (Test-Path $log) { Get-Content $log -Encoding Default } else { Write-Output '
 if ($ready -and -not $NoClient) {
   Write-Output '===== MCP CLIENT ====='
   $env:PYTHONIOENCODING = 'utf-8'
-  $job = Start-Job -ScriptBlock { param($s) python -I $s 2>&1 } -ArgumentList (Join-Path $proj 'test\mcp_client_test.py')
-  if (Wait-Job $job -Timeout $ClientTimeout) { Receive-Job $job } else { Write-Output 'CLIENT TIMEOUT'; Stop-Job $job }
-  Remove-Job $job -Force
+  foreach ($t in 'mcp_client_test.py','forms_test.py') {
+    $job = Start-Job -ScriptBlock { param($s) python -I $s 2>&1 } -ArgumentList (Join-Path $proj "test\$t")
+    if (Wait-Job $job -Timeout $ClientTimeout) { Receive-Job $job } else { Write-Output "CLIENT TIMEOUT ($t)"; Stop-Job $job }
+    Remove-Job $job -Force
+  }
 }
 if ($Keep -and $ready) { Write-Output 'KEEP: 1C left running, server on http://127.0.0.1:18777/mcp'; exit 0 }
 Stop-TestBase1C | Out-Null
