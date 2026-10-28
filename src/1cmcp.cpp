@@ -259,6 +259,7 @@ static CString RandomToken() {
 
 // ---------------------------------------------------------------- settings and server control
 static CString g_baseDir;
+static CString g_userDir;
 static CString g_url;
 static McpSettings g_run;  // settings of the running server
 
@@ -267,9 +268,35 @@ static CString BaseDir() {
     return g_baseDir;
 }
 
+// Settings are per user: КаталогПользователя() (Users\<имя>\ of the infobase).
+// A base without a user list returns the infobase folder itself.
+static CString SettingsDir() {
+    if(g_userDir.IsEmpty()) {
+        g_userDir = EvalString("КаталогПользователя()");
+        if(g_userDir.IsEmpty()) g_userDir = BaseDir();
+        if(!g_userDir.IsEmpty() && g_userDir.Right(1) != "\\") g_userDir += "\\";
+    }
+    return g_userDir;
+}
+
 CString McpSettingsPath() {
-    CString d = BaseDir();
+    CString d = SettingsDir();
     return d.IsEmpty() ? CString() : d + "1cmcp.ini";
+}
+
+// Versions up to 0.2 kept one 1cmcp.ini in the infobase folder for everybody. The first user
+// who loads the component takes it over (copy to the user folder); the shared file is renamed
+// to 1cmcp.ini.old so that other users get settings and a token of their own.
+static void MigrateSharedSettings() {
+    CString base = BaseDir(), user = SettingsDir();
+    if(base.IsEmpty() || user.IsEmpty() || base.CompareNoCase(user) == 0) return;
+    CString shared = base + "1cmcp.ini", own = user + "1cmcp.ini";
+    if(GetFileAttributesA(shared) == 0xFFFFFFFF || GetFileAttributesA(own) != 0xFFFFFFFF) return;
+    if(!CopyFileA(shared, own, TRUE)) return;
+    DeleteFileA(shared + ".old");
+    MoveFileA(shared, shared + ".old");
+    if(pBkEndUI)
+        pBkEndUI->DoMessageLine("1cmcp: общие настройки перенесены в каталог пользователя: " + own, mmInformation);
 }
 
 BOOL McpSettingsExist() {
@@ -369,12 +396,13 @@ CString McpTokenProblem(const CString& token) {
 }
 
 // Runs once in the 1C main thread right after the DLL is loaded (posted from DllMain):
-// adds the options page, creates 1cmcp.ini with a fresh token, starts the server if asked.
+// adds the options page, creates the user's 1cmcp.ini with a fresh token, starts the server if asked.
 static UINT g_initTimer = 0;
 static VOID CALLBACK InitTimerProc(HWND, UINT, UINT, DWORD) {
     KillTimer(NULL, g_initTimer);
     g_initTimer = 0;
     McpRegisterOptionsPage();
+    MigrateSharedSettings();
     McpSettings s;
     McpLoadSettings(s);
     if(!McpSettingsPath().IsEmpty() && (!McpSettingsExist() || s.token.IsEmpty())) {
@@ -457,7 +485,7 @@ class CMcpServerObj : public CContextImpl<CMcpServerObj> {
         return TRUE;
     }
     BL_FUNC(Version, "Версия", 0) {
-        setStr(retVal, "0.2.0");
+        setStr(retVal, "0.3.0");
         return TRUE;
     }
     // for tests: run a tool in-process exactly as an MCP call would (main thread)

@@ -1,4 +1,4 @@
-// mcp_page.h - settings (1cmcp.ini in the infobase folder), server control and the
+// mcp_page.h - settings (1cmcp.ini in the user folder of the infobase), server control and the
 // options page shown in Сервис -> Параметры. Source encoding: CP1251.
 #ifndef MCP_PAGE_H
 #define MCP_PAGE_H
