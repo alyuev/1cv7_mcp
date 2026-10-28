@@ -30,9 +30,16 @@ JVal McpFormJson(const McpForm& f);
 JVal McpFormControls(const McpForm& f, bool withValues);
 // form context = the "Конт" of ОткрытьФорму (NULL for tables/texts)
 CBLContext* McpFormContext(const McpForm& f);
+// the form's module: as the friend module of run_code its exported procedures are callable by name
+class CBLModule7;
+CBLModule7* McpFormModule(const McpForm& f);
 // activate the form and click the control (Button class: BM_CLICK). Runs the formula synchronously.
 bool McpPressButton(const McpForm& f, const std::string& button, std::string& err, JVal& info);
 // WM_COMMAND to the main frame (optionally after activating a form)
 bool McpSystemCommand(long code, const McpForm* f, std::string& err);
+// cells of a table document window (moxel, CSheetDoc): rows [from, from+max) as arrays of strings
+// call a procedure/function of the form module by name (also without Экспорт); args: JSON array
+bool McpCallFormProc(const McpForm& f, const std::string& name, const JVal& args, JVal& out, std::string& err);
+bool McpReadTable(const McpForm& f, int fromRow, int maxRows, int maxCols, JVal& out, std::string& err);
 
 #endif

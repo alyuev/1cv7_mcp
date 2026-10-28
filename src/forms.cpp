@@ -69,6 +69,13 @@ static void Describe(McpForm& f) {
             CString folder;
             long id = CConfigCont::DocumentToID((CDocument*)tc, folder);
             f.fullType = id > 0 ? GetModuleFullName(id, folder, 0, GetMetaData()) : CString("НеизвестныйОбъект");
+            // GetModuleFullName repeats the form name for list forms: X.ФормаСписка.ФормаСписка
+            int last = f.fullType.ReverseFind('.');
+            if(last > 0) {
+                CString tail = f.fullType.Mid(last);
+                CString head = f.fullType.Left(last);
+                if(head.GetLength() >= tail.GetLength() && head.Right(tail.GetLength()) == tail) f.fullType = head;
+            }
             int dot = f.fullType.Find('.');
             f.kind = dot >= 0 ? f.fullType.Left(dot) : f.fullType;
         } else {
@@ -167,6 +174,12 @@ CBLContext* McpFormContext(const McpForm& f) {
     return d ? (CBLContext*)d->GetGroupContext() : NULL;
 }
 
+// the form's own module (its friend is the global module)
+CBLModule7* McpFormModule(const McpForm& f) {
+    CGetDoc7* d = Doc7(f);
+    return d ? d->m_pBLModule : NULL;
+}
+
 // control windows of the form: child of a dialog (#32770) inside the frame
 struct CtrlFind {
     UINT id;
@@ -226,6 +239,8 @@ static CString Kind(const McpCtrl& m) {
     if(m.cls == "ComboBox") return "поле со списком";
     if(m.cls == "ListBox") return "список";
     if(m.cls == "SysTabControl32") return "закладки";
+    // buttons drawn by add-ins (FormEx/1C++ in Cactus): MFC windows "Afx:400000:3:..." instead of "Button"
+    if(m.cls.Left(4) == "Afx:") return "кнопка";
     return m.cls;
 }
 
@@ -304,7 +319,8 @@ bool McpPressButton(const McpForm& f, const std::string& button, std::string& er
     if(!hit->name.IsEmpty()) info.set("name", JVal::string(U(hit->name)));
     if(!hit->title.IsEmpty()) info.set("title", JVal::string(U(hit->title)));
     if(!hit->formula.IsEmpty()) info.set("formula", JVal::string(U(hit->formula)));
-    if(!hit->wnd || hit->cls != "Button") {
+    bool afx = hit->wnd && hit->cls.Left(4) == "Afx:";
+    if(!hit->wnd || (hit->cls != "Button" && !afx)) {
         err = Cp1251ToUtf8("элемент не кнопка и не флажок: нажимать можно только их");
         return false;
     }
@@ -315,7 +331,10 @@ bool McpPressButton(const McpForm& f, const std::string& button, std::string& er
     Activate(f);
     // BM_CLICK = mouse down/up on the button: 1C sees a real click (a checkbox toggles too)
     // and runs the formula right here, inside this call
-    SendMessage(hit->wnd, BM_CLICK, 0, 0);
+    if(afx)  // not a Windows button: notify the dialog the way a button does, 1C runs the formula
+        SendMessage(GetParent(hit->wnd), WM_COMMAND, MAKEWPARAM(hit->id, BN_CLICKED), (LPARAM)hit->wnd);
+    else
+        SendMessage(hit->wnd, BM_CLICK, 0, 0);
     if(Kind(*hit) == "флажок" && IsWindow(hit->wnd))
         info.set("checked", JVal::boolean(SendMessage(hit->wnd, BM_GETCHECK, 0, 0) == BST_CHECKED));
     info.set("form_closed", JVal::boolean(!IsWindow(f.frame)));
@@ -335,5 +354,130 @@ bool McpSystemCommand(long code, const McpForm* f, std::string& err) {
     }
     if(f) Activate(*f);
     mf->SendMessage(WM_COMMAND, (WPARAM)code, 0);
+    return true;
+}
+
+// ---------------------------------------------------------------- table documents (moxel)
+static bool IsClass(CObject* o, const char* name) {
+    for(CRuntimeClass* rc = o ? o->GetRuntimeClass() : NULL; rc;) {
+        if(!strcmp(rc->m_lpszClassName, name)) return true;
+#ifdef _AFXDLL
+        rc = rc->m_pfnGetBaseClass ? rc->m_pfnGetBaseClass() : NULL;
+#else
+        rc = rc->m_pBaseClass;
+#endif
+    }
+    return false;
+}
+
+// Text of every cell straight from CSheetDoc::m_Sheet (what the user sees; formulas are already computed
+// in a shown table). Rows/columns are 1-based in the answer, like R1C1 in 1C.
+bool McpReadTable(const McpForm& f, int fromRow, int maxRows, int maxCols, JVal& out, std::string& err) {
+    if(!IsClass(f.doc, "CSheetDoc")) {
+        err = Cp1251ToUtf8("это окно не табличный документ (см. kind в forms: нужна Таблица)");
+        return false;
+    }
+    CSheet& sh = ((CSheetDoc*)f.doc)->m_Sheet;
+    int nRows = (int)sh.m_nRows, nCols = (int)sh.m_nCols;
+    if(fromRow < 1) fromRow = 1;
+    if(maxRows < 1) maxRows = 1;
+    if(maxCols < 1) maxCols = 1;
+    int lastCol = 0;
+    JVal rows = JVal::array();
+    for(int r = fromRow - 1; r < nRows && (int)rows.size() < maxRows; r++) {
+        JVal row = JVal::array();
+        int used = 0;
+        for(int c = 0; c < nCols && c < maxCols; c++) {
+            CSheetCell* cell = NULL;
+            CString t;
+            if(sh.LookupCell(r, c, cell) && cell) t = cell->GetText();
+            t.TrimRight();
+            row.push(JVal::string(U(t)));
+            if(!t.IsEmpty()) used = c + 1;
+        }
+        // drop empty trailing cells; keep the row so row numbers stay aligned
+        JVal trimmed = JVal::array();
+        for(int k = 0; k < used; k++) trimmed.push(row.at(k));
+        if(used > lastCol) lastCol = used;
+        rows.push(trimmed);
+    }
+    out.set("rows_total", JVal::number(nRows));
+    out.set("columns_total", JVal::number(nCols));
+    out.set("from_row", JVal::number(fromRow));
+    out.set("rows", rows);
+    if(fromRow - 1 + (int)rows.size() < nRows)
+        out.set("next_from_row", JVal::number(fromRow + (int)rows.size()));
+    if(nCols > maxCols) out.set("columns_cut", JVal::number(maxCols));
+    return true;
+}
+
+// ---------------------------------------------------------------- procedures of the form module
+// Like 1C++ ВыполняемыйМодуль: find the procedure by name in the form's CBLModule and call it with
+// CallAsFunc/CallAsProc - also procedures without Экспорт (the developer's own form). Missing
+// arguments are passed empty; extra ones are an error.
+bool McpCallFormProc(const McpForm& f, const std::string& name, const JVal& args, JVal& out, std::string& err) {
+    CBLModule7* m = McpFormModule(f);
+    if(!m) {
+        err = Cp1251ToUtf8("у этого окна нет модуля формы");
+        return false;
+    }
+    CString want = Utf8ToCp1251(name).c_str();
+    int idx = -1;
+    CBLProcInfo pi;
+    for(int i = 0; i < m->GetNProcs(); i++) {
+        CBLProcInfo cur;
+        if(m->GetProcInfo(i, cur) && cur.GetName() && !want.CompareNoCase(cur.GetName())) {
+            idx = i;
+            pi = cur;
+            break;
+        }
+    }
+    if(idx < 0) {
+        err = Cp1251ToUtf8("в модуле формы нет процедуры или функции \"") + name + "\"";
+        return false;
+    }
+    int nParams = pi.GetNParams();
+    int nArgs = args.isArr() ? (int)args.size() : 0;
+    if(nArgs > nParams) {
+        char buf[96];
+        sprintf(buf, " takes %d parameter(s), %d given", nParams, nArgs);
+        err = name + buf;
+        return false;
+    }
+    std::vector<CValue*> vals;
+    for(int k = 0; k < nParams; k++) {
+        CValue* v = new CValue();
+        if(k < nArgs) {
+            const JVal& a = args.at(k);
+            if(a.isNum()) {
+                CNumeric n;
+                n = a.asNum();
+                *v = CValue(n);
+            } else {
+                v->Reset();
+                v->type = 2;
+                v->m_String = Utf8ToCp1251(a.asStr()).c_str();
+            }
+        }
+        vals.push_back(v);
+    }
+    CValue** pp = nParams ? &vals[0] : NULL;
+    CValue ret;
+    int ok;
+    if(pi.HasRetVal()) ok = m->CallAsFunc(idx, ret, nParams, pp);
+    else ok = m->CallAsProc(idx, nParams, pp);
+    for(size_t j = 0; j < vals.size(); j++) delete vals[j];
+    out.set("procedure", JVal::string(U(pi.GetName())));
+    out.set("exported", JVal::boolean(pi.IsExported() != 0));
+    if(pi.HasRetVal()) {
+        JVal r = JVal::object();
+        r.set("type", JVal::string(U(ret.GetTypeString() ? ret.GetTypeString() : "")));
+        r.set("value", JVal::string(U(ret.Format() ? ret.Format() : "")));
+        out.set("result", r);
+    }
+    if(!ok) {
+        err = Cp1251ToUtf8("1С вернула ошибку вызова (подробности - в messages/read_log)");
+        return false;
+    }
     return true;
 }

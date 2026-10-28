@@ -619,6 +619,21 @@ JVal McpServer::ToolsList() {
                        p, "button", false));
 
         p = JVal::object();
+        p.set("form", Prop("string", "Форма: номер из forms, hwnd или часть заголовка/вида/имени файла. "
+                                     "По умолчанию активная."));
+        p.set("name", Prop("string", "Имя процедуры или функции модуля формы (регистр не важен)."));
+        JVal argsProp = Prop("array", "Параметры по порядку: строки и числа. Недостающие передаются пустыми.");
+        argsProp.set("items", JVal::object());
+        p.set("args", argsProp);
+        AddWaitProps(p);
+        list.push(Tool("call_form_procedure", "Вызвать процедуру формы",
+                       "Вызывает процедуру или функцию модуля открытой формы по имени - в том числе без Экспорт, "
+                       "как это сделал бы сам модуль (например ЗагрузитьВариант() после установки реквизита "
+                       "через run_code с form). Возвращает result функции и новые строки окна сообщений. "
+                       "Модальное окно внутри - task_id, как у run_code.",
+                       p, "name", false));
+
+        p = JVal::object();
         p.set("code", Prop("number", "Код команды WM_COMMAND, например 57603 (Сохранить), 32880 (Движения "
                                      "документа), 57600 (Новый). Коды со старшим битом от FormEx (99298) "
                                      "тоже принимаются."));
@@ -642,6 +657,19 @@ JVal McpServer::ToolsList() {
                    "реквизиты (шапка и табличная часть документа, измерения и ресурсы регистра, значения "
                    "перечисления) с типами, длиной и признаком периодичности. Имена реквизитов годятся и для "
                    "запросов 1sqlite.",
+                   p, NULL, true));
+
+    p = JVal::object();
+    p.set("form", Prop("string", "Окно таблицы: номер из forms, hwnd или часть заголовка. По умолчанию активное."));
+    p.set("from_row", Prop("number", "С какой строки (1 = первая). Для продолжения - next_from_row из ответа."));
+    p.set("max_rows", Prop("number", "Максимум строк (по умолчанию 200)."));
+    p.set("max_columns", Prop("number", "Максимум колонок (по умолчанию 50)."));
+    AddWaitProps(p);
+    list.push(Tool("read_table", "Прочитать таблицу",
+                   "Текст ячеек открытого табличного документа (окно вида Таблица: результат отчёта, "
+                   "печатная форма, Таблица.Показать()) - то, что видит пользователь. rows - массив строк, "
+                   "каждая - массив текстов ячеек слева направо (пустые в конце строки отброшены); "
+                   "номер строки = from_row + индекс. Большие таблицы читайте частями через next_from_row.",
                    p, NULL, true));
 
     p = JVal::object();
@@ -701,12 +729,12 @@ JVal McpServer::CallTool(const std::string& name, const JVal& args, bool& isErro
     else if(name == "eval" || name == "run_code") {
         if(!m_cfg.allowCode) { isError = true; text = "выполнение кода запрещено в настройках компоненты"; }
         else text = Run1C(name, args, isError, pending);
-    } else if(name == "press_button" || name == "system_command") {
+    } else if(name == "press_button" || name == "system_command" || name == "call_form_procedure") {
         // a button formula or a command can do anything a user can: same switch as code
         if(!m_cfg.allowCode) { isError = true; text = "нажатие кнопок и команды запрещены в настройках компоненты"; }
         else text = Run1C(name, args, isError, pending);
     } else if(name == "read_messages" || name == "clear_messages" || name == "forms" || name == "form_controls" ||
-              name == "metadata")
+              name == "metadata" || name == "read_table")
         text = Run1C(name, args, isError, pending);
     else
         return JVal();

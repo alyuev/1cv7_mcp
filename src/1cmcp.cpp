@@ -137,6 +137,7 @@ class CMcpHost : public McpHost {
             return RunModule("Результат = " + Utf8ToCp1251(args.get("expression").asStr()) + ";\r\n", 1, text);
         if(tool == "run_code") {
             CBLContext* ctx = NULL;
+            CBLModule7* fm = NULL;
             if(args.has("form") && !(args.get("form").isStr() && args.get("form").asStr().empty())) {
                 McpForm f;
                 std::string err;
@@ -145,17 +146,34 @@ class CMcpHost : public McpHost {
                     text = Error(err);
                     return false;
                 }
+                fm = McpFormModule(f);
             }
-            return RunModule(Utf8ToCp1251(args.get("code").asStr()), 0, text, ctx);
+            return RunModule(Utf8ToCp1251(args.get("code").asStr()), 0, text, ctx, fm);
         }
         if(tool == "metadata") return Metadata(args, text);
+        if(tool == "read_table") {
+            McpForm f;
+            std::string err;
+            JVal r = JVal::object();
+            if(!McpFindForm(args, f, err)) {
+                text = Error(err);
+                return false;
+            }
+            r.set("form", McpFormJson(f));
+            bool ok = McpReadTable(f, (int)args.get("from_row").asNum(1), (int)args.get("max_rows").asNum(200),
+                                   (int)args.get("max_columns").asNum(50), r, err);
+            if(!ok) r.set("error", JVal::string(err));
+            text = r.dump();
+            return ok;
+        }
         if(tool == "forms") {
             JVal r = JVal::object();
             r.set("forms", McpFormsJson());
             text = r.dump();
             return true;
         }
-        if(tool == "form_controls" || tool == "press_button" || tool == "system_command") {
+        if(tool == "form_controls" || tool == "press_button" || tool == "system_command" ||
+           tool == "call_form_procedure") {
             McpForm f;
             std::string err;
             bool needForm = tool != "system_command" || args.has("form");
@@ -172,7 +190,10 @@ class CMcpHost : public McpHost {
             }
             int msgBefore = MsgLineCount();
             bool ok;
-            if(tool == "press_button") {
+            if(tool == "call_form_procedure") {
+                r.set("form", McpFormJson(f));
+                ok = McpCallFormProc(f, args.get("name").asStr(), args.get("args"), r, err);
+            } else if(tool == "press_button") {
                 r.set("form", McpFormJson(f));
                 JVal info = JVal::object();
                 ok = McpPressButton(f, args.get("button").isNum() ? NumStr(args.get("button").asNum()) : args.get("button").asStr(),
@@ -265,7 +286,10 @@ class CMcpHost : public McpHost {
     // Main thread only. offset = number of lines we prepend before the user code.
     // ctx: form context - the code is compiled in it, as if written in the form module
     // (form attributes, Форма, Контекст are visible directly).
-    bool RunModule(const std::string& code1251, int isEval, std::string& text, CBLContext* ctx = NULL) {
+    // formModule: friend module instead of the global one - the form's exported procedures by name
+    // (the form module's own friend is the global module, so global procedures stay visible).
+    bool RunModule(const std::string& code1251, int isEval, std::string& text, CBLContext* ctx = NULL,
+                   CBLModule7* formModule = NULL) {
         std::string src = "Перем Результат;\r\n";
         // normalise line ends to CRLF
         for(size_t i = 0; i < code1251.size(); i++) {
@@ -280,7 +304,8 @@ class CMcpHost : public McpHost {
         CMcpModule* m = new CMcpModule();
         try {
             CBLModule7* gm = GetGlobalModule();
-            if(gm) m->AssignFriendModule(gm);
+            if(formModule) m->AssignFriendModule(formModule);
+            else if(gm) m->AssignFriendModule(gm);
             if(ctx) m->AssignContext(ctx);
             m->AssignSource(src.c_str());
             if(!m->Compile()) {

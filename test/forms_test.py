@@ -84,6 +84,38 @@ if pend:
     g, err = call("get_task", task_id=p["task_id"], wait_seconds=10)
     check(isinstance(g, dict) and g.get("state", "done") != "running", "dialog closed, task finished", [d, g])
 
+r, err = call("run_code", form="Автотест", code="Результат = УдвоитьДляТеста(21) + СтрДлина(КаталогИБ()) * 0;")
+check(not err and r.get("result", {}).get("value") == "42",
+      "run_code with form: an exported procedure of the form module is callable by name", r)
+
+r, err = call("call_form_procedure", form="Автотест", name="удвоитьдлятеста", args=[5])
+check(not err and r.get("result", {}).get("value") == "10" and r.get("exported") is True,
+      "call_form_procedure: exported function with a number argument", r)
+r, err = call("call_form_procedure", form="Автотест", name="ВЛог", args=["вызов не экспортной процедуры"])
+log_text = open(r"D:\Разработка\1С\VK\1CAPI\1CTestBase\test_log.txt", encoding="cp1251").read()
+check(not err and r.get("exported") is False and "вызов не экспортной процедуры" in log_text,
+      "call_form_procedure: procedure without Экспорт is called too", r)
+r, err = call("call_form_procedure", form="Автотест", name="НетТакой")
+check(err and "нет процедуры" in r.get("error", ""), "call_form_procedure: unknown name is an error", r)
+
+code = ('Т = СоздатьОбъект("Таблица");\n'
+        'Т.Область("R1C1").Текст = "Имя";\nТ.Область("R1C2").Текст = "Сумма";\n'
+        'Т.Область("R2C1").Текст = "Иванов";\nТ.Область("R2C2").Текст = "100";\n'
+        'Т.Область("R4C3").Текст = "x";\nТ.Показать("Тест таблицы");')
+r, err = call("run_code", code=code)
+t, err = call("read_table", form="Тест таблицы")
+rows = t.get("rows") if isinstance(t, dict) else None
+check(not err and rows and rows[0] == ["Имя", "Сумма"] and rows[1] == ["Иванов", "100"] and rows[2] == []
+      and rows[3] == ["", "", "x"], "read_table: cells by R1C1 position", t)
+t, err = call("read_table", form="Тест таблицы", from_row=2, max_rows=1)
+check(not err and t.get("rows") == [["Иванов", "100"]] and t.get("next_from_row") == 3, "read_table: paging", t)
+t, err = call("read_table", form="Автотест")
+check(err and "не табличный" in t.get("error", ""), "read_table on a dialog form is an error", t)
+call("system_command", code=57602, form="Тест таблицы", wait_seconds=3)  # Файл > Закрыть
+st, _ = call("status")
+if isinstance(st, dict) and st.get("modal"):  # "save changes?" - answer No
+    call("dialog_button", button="Нет")
+
 m, err = call("metadata", kind="справочник", name="тмц")
 check(not err and isinstance(m, str) and m.startswith("Справочник.ТМЦ") and "ДатаСоздания" in m and "Дата" in m,
       "metadata: справочник ТМЦ with its attribute (kind/name case-insensitive)", m)
