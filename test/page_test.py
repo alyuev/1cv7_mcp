@@ -8,7 +8,7 @@ import win32gui, win32con, win32process
 from PIL import ImageGrab
 
 URL = "http://127.0.0.1:18777/mcp"
-TOKEN = "test-token-123"
+TOKEN = "test-token-0123456789"
 out_png = sys.argv[1] if len(sys.argv) > 1 else "options_page.png"
 INI = sys.argv[2] if len(sys.argv) > 2 else ""
 rid = 0
@@ -109,7 +109,26 @@ ok = ok and note_ok and cmd_ok
 # --- Apply: type new port/token into the page, press "Применить", expect ini + restarted server
 ctrls = {}
 win32gui.EnumChildWindows(dlg, lambda h, _: ctrls.setdefault(win32gui.GetDlgCtrlID(h), h) and True, None)
-NEW_PORT, NEW_TOKEN = 18781, "page-token-456"
+# empty token must be refused: a warning box, nothing saved
+ini_before = open(INI, encoding="cp1251").read() if INI else ""
+win32gui.SendMessage(ctrls[3103], win32con.WM_SETTEXT, 0, "")
+time.sleep(0.3)
+print(tool("dialog_button", {"button": "Применить"}))
+time.sleep(1.0)
+s = json.loads(tool("status"))
+warn = s.get("modal_window", "")
+print("warning on empty token:", warn)
+refused_ok = "не сохранены" in warn
+print(tool("dialog_button", {"button": "OK"}))  # close the warning, the options window stays
+time.sleep(0.8)
+ini_after = open(INI, encoding="cp1251").read() if INI else ""
+refused_ok = refused_ok and ini_after == ini_before
+print("empty token refused, ini untouched:", refused_ok)
+ok = ok and refused_ok
+s = json.loads(tool("screen"))
+dlg = int(s["active_modal"]["hwnd"], 16)  # still the options window
+
+NEW_PORT, NEW_TOKEN = 18781, "page-token-0123456789"
 win32gui.SendMessage(ctrls[3101], win32con.WM_SETTEXT, 0, str(NEW_PORT))   # IDC_PORT
 win32gui.SendMessage(ctrls[3103], win32con.WM_SETTEXT, 0, NEW_TOKEN)        # IDC_TOKEN
 time.sleep(0.3)

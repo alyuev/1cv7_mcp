@@ -6,7 +6,7 @@
 struct McpSettings {
     int port;
     CString addr;
-    CString token;  // empty = no auth (loopback only)
+    CString token;  // required, see McpTokenProblem
     BOOL allowCode;
     BOOL autoStart;
 };
@@ -25,6 +25,7 @@ CString McpServerUrl();
 BOOL McpRunningSettings(McpSettings& s);  // what the running server was started with
 long McpServerRequests();
 CString McpNewToken();
+CString McpTokenProblem(const CString& token);  // empty = ok, else reason
 
 // implemented in optpage.cpp
 void McpRegisterOptionsPage();

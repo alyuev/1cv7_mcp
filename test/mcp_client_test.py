@@ -5,7 +5,7 @@ Prints PASS/FAIL lines and RESULT: OK/FAIL."""
 import json, sys, time, urllib.request, urllib.error
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:18777/mcp"
-TOKEN = sys.argv[2] if len(sys.argv) > 2 else "test-token-123"
+TOKEN = sys.argv[2] if len(sys.argv) > 2 else "test-token-0123456789"
 fails = 0
 rid = 0
 

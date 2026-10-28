@@ -59,7 +59,7 @@ static int Http(const char* method, const char* path, const std::string& body, c
     return status;
 }
 
-static const char* AUTH = "Authorization: Bearer t0k\r\n";
+static const char* AUTH = "Authorization: Bearer selftest-token-0123456789\r\n";
 
 static std::string Call(const char* tool, const char* args) {
     std::string body = std::string("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"") +
@@ -90,7 +90,7 @@ static unsigned __stdcall Client(void*) {
     st = Http("POST", "/mcp", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}", "Authorization: Bearer bad\r\n", r);
     Check(st == 401, "bad token -> 401");
     st = Http("POST", "/mcp", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}",
-              "Authorization: Bearer t0k\r\nOrigin: http://evil.example\r\n", r);
+              "Authorization: Bearer selftest-token-0123456789\r\nOrigin: http://evil.example\r\n", r);
     Check(st == 403, "foreign origin -> 403");
 
     st = Http("POST", "/mcp",
@@ -161,7 +161,7 @@ static unsigned __stdcall Client(void*) {
         connect(s, (sockaddr*)&sa, sizeof(sa));
         std::string b = "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"ping\"}";
         char head[256];
-        sprintf(head, "POST /mcp HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer t0k\r\nContent-Length: %u\r\n\r\n",
+        sprintf(head, "POST /mcp HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer selftest-token-0123456789\r\nContent-Length: %u\r\n\r\n",
                 (unsigned)b.size());
         std::string req = std::string(head) + b;
         req += req;
@@ -210,10 +210,22 @@ int main() {
     McpServer srv;
     McpConfig cfg;
     cfg.port = PORT;
-    cfg.token = "t0k";
+    cfg.token = "selftest-token-0123456789";
     cfg.mlgPath = mlg;
     cfg.auditPath = std::string(tmp) + "1cmcp_selftest_audit.log";
     DeleteFileA(cfg.auditPath.c_str());
+    // no anonymous mode and no weak tokens, not even on 127.0.0.1
+    {
+        McpServer s2;
+        McpConfig c2 = cfg;
+        std::string e2;
+        c2.token = "";
+        Check(!s2.Start(c2, &host, e2), "start without token refused", e2);
+        c2.token = "short";
+        Check(!s2.Start(c2, &host, e2), "start with short token refused", e2);
+        c2.token = "has space 0123456789";
+        Check(!s2.Start(c2, &host, e2), "token with space refused", e2);
+    }
     if(!srv.Start(cfg, &host, err)) {
         printf("FAIL start: %s\nRESULT: FAIL\n", err.c_str());
         return 1;

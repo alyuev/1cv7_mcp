@@ -93,6 +93,18 @@ static std::string WndClass(HWND h) {
     return std::string(buf, n > 0 ? n : 0);
 }
 
+std::string McpCheckToken(const std::string& token) {
+    if(token.size() < MCP_MIN_TOKEN) {
+        char buf[96];
+        sprintf(buf, "token is required (at least %d characters)", MCP_MIN_TOKEN);
+        return buf;
+    }
+    for(size_t i = 0; i < token.size(); i++)
+        if((unsigned char)token[i] <= 0x20 || (unsigned char)token[i] >= 0x7F)
+            return "token may contain only latin letters, digits and punctuation, no spaces";
+    return std::string();
+}
+
 static bool TokenEquals(const std::string& a, const std::string& b) {
     // constant time for equal lengths
     if(a.size() != b.size()) return false;
@@ -124,11 +136,9 @@ bool McpServer::Start(const McpConfig& cfg, McpHost* host, std::string& err) {
     m_cfg = cfg;
     m_host = host;
     if(m_cfg.bindAddr.empty()) m_cfg.bindAddr = "127.0.0.1";
-    bool loopback = m_cfg.bindAddr == "127.0.0.1" || m_cfg.bindAddr == "localhost";
-    if(m_cfg.token.empty() && !loopback) {
-        err = "a token is required when listening on a non-loopback address";
-        return false;
-    }
+    // no anonymous mode, not even on 127.0.0.1: any local program could run 1C code otherwise
+    err = McpCheckToken(m_cfg.token);
+    if(!err.empty()) return false;
     WSADATA wd;
     if(WSAStartup(MAKEWORD(2, 2), &wd) != 0) { err = "WSAStartup failed"; return false; }
     m_listen = (unsigned int)socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -362,7 +372,7 @@ void McpServer::ServeConnection(unsigned int sock) {
             SendResponse(s, 403, "Forbidden", "text/plain", "origin not allowed", false);
             return;
         }
-        if(!m_cfg.token.empty()) {
+        {
             std::string expect = "Bearer " + m_cfg.token;
             if(!TokenEquals(auth, expect)) {
                 Audit("REJECT bad token");
@@ -847,6 +857,17 @@ static void StripAmp(std::wstring& s) {
     s = r;
 }
 
+// Button captions mix scripts: 1C writes "ОК" in Cyrillic, an agent asks for "OK" in Latin.
+// Fold look-alike Cyrillic letters to Latin before comparing (input is already lower case).
+static void FoldHomoglyphs(std::wstring& s) {
+    static const wchar_t cyr[] = {0x0430, 0x0432, 0x0435, 0x043a, 0x043c, 0x043d,
+                                  0x043e, 0x0440, 0x0441, 0x0442, 0x0443, 0x0445, 0};
+    static const wchar_t lat[] = L"abekmhopctyx";
+    for(size_t i = 0; i < s.size(); i++)
+        for(int k = 0; cyr[k]; k++)
+            if(s[i] == cyr[k]) { s[i] = lat[k]; break; }
+}
+
 std::string McpServer::ToolDialogButton(const JVal& args, bool& isError) {
     HWND dlg = NULL;
     std::string hs = args.get("hwnd").asStr();
@@ -865,6 +886,7 @@ std::string McpServer::ToolDialogButton(const JVal& args, bool& isError) {
     std::wstring want = Utf8ToWide(args.get("button").asStr());
     StripAmp(want);
     if(!want.empty()) CharLowerBuffW(&want[0], (DWORD)want.size());
+    FoldHomoglyphs(want);
     HWND exact = NULL, partial = NULL;
     std::string seen;
     for(HWND c = GetWindow(dlg, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
@@ -876,6 +898,7 @@ std::string McpServer::ToolDialogButton(const JVal& args, bool& isError) {
         if(!seen.empty()) seen += ", ";
         seen += WideToUtf8(t.c_str(), (int)t.size());
         if(!t.empty()) CharLowerBuffW(&t[0], (DWORD)t.size());
+        FoldHomoglyphs(t);
         if(t == want) exact = c;
         else if(!want.empty() && !partial && t.find(want) != std::wstring::npos) partial = c;
     }

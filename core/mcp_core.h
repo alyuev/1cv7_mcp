@@ -23,10 +23,15 @@ class McpHost {
     virtual bool RunTool(const std::string& tool, const JVal& args, std::string& text) = 0;
 };
 
+#define MCP_MIN_TOKEN 16
+
+// empty string = token is acceptable, otherwise the reason (English)
+std::string McpCheckToken(const std::string& token);
+
 struct McpConfig {
     std::string bindAddr;   // default 127.0.0.1
     int port;               // default 8777
-    std::string token;      // Bearer token; empty = no auth (only allowed on 127.0.0.1)
+    std::string token;      // Bearer token, required: >= MCP_MIN_TOKEN printable ASCII chars
     std::string mlgPath;    // 1C log (SYSLOG\1cv7.mlg), for read_log
     std::string auditPath;  // own call log, empty = off
     std::string baseInfo;   // free text about the infobase, shown in initialize/status

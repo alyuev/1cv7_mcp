@@ -308,6 +308,8 @@ BOOL McpSaveSettings(const McpSettings& s) {
 }
 
 BOOL McpServerStart(const McpSettings& s, CString& err) {
+    err = McpTokenProblem(s.token);
+    if(!err.IsEmpty()) return FALSE;
     McpConfig cfg;
     cfg.port = s.port > 0 ? s.port : 8777;
     cfg.token = (LPCSTR)s.token;
@@ -358,6 +360,14 @@ BOOL McpRunningSettings(McpSettings& s) {
 long McpServerRequests() { return g_server ? g_server->RequestCount() : 0; }
 CString McpNewToken() { return RandomToken(); }
 
+CString McpTokenProblem(const CString& token) {
+    if(McpCheckToken((LPCSTR)token).empty()) return CString();
+    CString s;
+    s.Format("нужен токен не короче %d символов: латинские буквы, цифры, знаки, без пробелов "
+             "(кнопка Ђ—генерироватьї)", MCP_MIN_TOKEN);
+    return s;
+}
+
 // Runs once in the 1C main thread right after the DLL is loaded (posted from DllMain):
 // adds the options page, creates 1cmcp.ini with a fresh token, starts the server if asked.
 static UINT g_initTimer = 0;
@@ -367,7 +377,7 @@ static VOID CALLBACK InitTimerProc(HWND, UINT, UINT, DWORD) {
     McpRegisterOptionsPage();
     McpSettings s;
     McpLoadSettings(s);
-    if(!McpSettingsExist() && !McpSettingsPath().IsEmpty()) {
+    if(!McpSettingsPath().IsEmpty() && (!McpSettingsExist() || s.token.IsEmpty())) {
         s.token = RandomToken();
         McpSaveSettings(s);
     }

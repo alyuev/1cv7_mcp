@@ -92,6 +92,12 @@ class CMcpOptPage : public IPropertyPage {
         if(!m_hwnd || !m_dirty) return S_OK;
         McpSettings s;
         Read(s);
+        CString bad = McpTokenProblem(s.token);
+        if(!bad.IsEmpty()) {  // never save a setup that would run without a real token
+            MessageBoxA(m_hwnd, "Настройки не сохранены: " + bad + ".", "MCP-сервер", MB_OK | MB_ICONWARNING);
+            SetFocus(GetDlgItem(m_hwnd, IDC_TOKEN));
+            return E_FAIL;
+        }
         McpSaveSettings(s);
         m_dirty = FALSE;
         if(McpServerRunning()) {  // apply new port/token at once
@@ -193,7 +199,7 @@ class CMcpOptPage : public IPropertyPage {
         }
         if(run.token != ini.token) {
             if(!d.IsEmpty()) d += ", ";
-            d += run.token.IsEmpty() ? "без токена" : "другой токен";
+            d += "другой токен";
         }
         if(!run.allowCode != !ini.allowCode) {
             if(!d.IsEmpty()) d += ", ";
@@ -208,7 +214,7 @@ class CMcpOptPage : public IPropertyPage {
         CString host = s.addr == "0.0.0.0" ? CString("127.0.0.1") : s.addr;
         CString cmd;
         cmd.Format("claude mcp add --transport http 1c http://%s:%d/mcp", (LPCSTR)host, s.port);
-        if(!s.token.IsEmpty()) cmd += " --header \"Authorization: Bearer " + s.token + "\"";
+        cmd += " --header \"Authorization: Bearer " + s.token + "\"";
         return cmd;
     }
     void OnCommand(int id, int code) {
