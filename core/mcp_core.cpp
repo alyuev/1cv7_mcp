@@ -477,15 +477,15 @@ std::string McpServer::HandleRpc(const std::string& body, int& httpStatus, const
 }
 
 static const char* kInstructions =
-    "Сервер даёт доступ к работающему сеансу 1С:Предприятие 7.7 (внешняя компонента 1cmcp). "
-    "1С однопоточная: инструменты eval, run_code, read_messages, clear_messages выполняются по очереди "
-    "в главном потоке 1С и ждут, пока 1С освободится. Если 1С занята или показывает модальное окно, "
-    "ответ придёт с task_id - проверяйте его через get_task. "
-    "status, screen, read_log, get_task, dialog_button отвечают сразу и работают даже когда 1С занята. "
-    "Рекомендуемый порядок: status -> (если есть модальное окно) screen и dialog_button -> eval/run_code -> "
-    "read_messages и read_log для анализа. Код пишется на встроенном языке 1С 7.7 (не 8.x!). "
-    "Работа с формами как у пользователя: forms (что открыто) -> form_controls (кнопки, поля, формулы) -> "
-    "press_button или run_code с form (код выполняется в контексте формы); команды меню - system_command.";
+    "Access to a running 1C:Enterprise 7.7 session (1cmcp). Code language: 1C 7.7 (not 8.x). "
+    "1C is single-threaded: eval, run_code, form and UI tools run one by one in the main thread. If 1C is busy "
+    "or shows a modal window the reply has a task_id: poll get_task (dialog_button closes the window). "
+    "status, screen, read_log, get_task, dialog_button answer instantly. "
+    "Flow: status -> forms -> form_controls -> press_button / set_value / run_code (form=...); menu commands: "
+    "ui_find, system_command. "
+    "Common args: wait_seconds (default 30, max 600), allow_modal (run despite a modal window), "
+    "say (short on-screen note for the user, in the language given below).";
+
 
 // the demo scenario given to the agent by prompts/get "demo"
 static std::string DemoScript(const std::string& lang) {
@@ -602,10 +602,10 @@ JVal McpServer::Dispatch(const JVal& msg, const McpReqCtx& ctx, std::string* new
         info.set("version", JVal::string(MCP_VERSION));
         result.set("serverInfo", info);
         std::string instr = kInstructions;
-        if(!m_cfg.baseInfo.empty()) instr += " Информационная база: " + m_cfg.baseInfo;
-        instr += " Язык надписей для пользователя на экране (say, caption): " +
+        if(!m_cfg.baseInfo.empty()) instr += " Infobase: " + m_cfg.baseInfo;
+        instr += " Language of on-screen notes (say, caption): " +
                  (m_cfg.language.empty() ? std::string("ru") : m_cfg.language) +
-                 " (ru - русский, en - английский, bg - болгарский). Демо-режим: prompt \"demo\".";
+                 " (ru, en, bg). Demo mode: prompt \"demo\".";
         result.set("instructions", JVal::string(instr));
     } else if(method == "ping") {
         // empty result
@@ -713,280 +713,232 @@ static JVal Tool(const char* name, const char* title, const char* descr, const J
 }
 
 static void AddSay(JVal& p) {
-    p.set("say", Prop("string", "Пояснение для пользователя на экране: облачко рядом с подсвеченным элементом "
-                                "(на языке из instructions). Коротко: что и зачем делается."));
+    p.set("say", Prop("string", "On-screen note for the user."));
 }
 
 static void AddWaitProps(JVal& p) {
-    p.set("wait_seconds", Prop("number", "Сколько секунд ждать результат (по умолчанию 30, максимум 600). "
-                                         "Если не дождались - вернётся task_id для get_task."));
-    p.set("allow_modal", Prop("boolean", "Выполнить, даже если в 1С открыто модальное окно (по умолчанию false)."));
+    p.set("wait_seconds", Prop("number", "Max wait, s."));
+    p.set("allow_modal", Prop("boolean", "Run even if a modal window is open."));
 }
+
+static const char* kFormDoc = "Form: number from forms, hwnd or part of the title. Default: active.";
 
 JVal McpServer::ToolsList() {
     JVal list = JVal::array();
     JVal p;
 
     list.push(Tool("status", "Состояние 1С",
-                   "Состояние сеанса 1С: свободна или занята, есть ли модальное окно, текст строки состояния, "
-                   "очередь задач. Отвечает мгновенно, даже если 1С занята.",
+                   "1C session state: idle/busy, modal window, status bar, task queue. Instant.",
                    JVal::object(), NULL, true));
 
     p = JVal::object();
-    p.set("hwnd", Prop("string", "Показать элементы конкретного окна (hwnd из предыдущего вызова screen)."));
+    p.set("hwnd", Prop("string", "Show controls of this window."));
     list.push(Tool("screen", "Окна 1С",
-                   "Окна процесса 1С: главное окно, открытые формы (MDI), диалоги. Для модального окна "
-                   "показывает его тексты и кнопки. Не требует свободного главного потока.",
+                   "Windows of the 1C process: main, open forms, dialogs; for a modal window its texts and buttons. Instant.",
                    p, NULL, true));
 
     p = JVal::object();
-    p.set("lines", Prop("number", "Сколько последних строк вернуть (по умолчанию 30, максимум 500)."));
-    p.set("contains", Prop("string", "Вернуть только строки, содержащие этот текст (без учёта регистра)."));
+    p.set("lines", Prop("number", "Last N lines (default 30, max 500)."));
+    p.set("contains", Prop("string", "Only lines containing this text."));
     list.push(Tool("read_log", "Журнал регистрации",
-                   "Последние строки журнала регистрации 1С (SYSLOG\\1cv7.mlg): ошибки, входы, записи объектов.",
+                   "Tail of the 1C event log (SYSLOG\\1cv7.mlg): errors, logins, object writes.",
                    p, NULL, true));
 
     p = JVal::object();
-    p.set("task_id", Prop("number", "Номер задачи."));
-    p.set("wait_seconds", Prop("number", "Сколько секунд подождать завершения (по умолчанию 0)."));
+    p.set("task_id", Prop("number", "Task number."));
+    p.set("wait_seconds", Prop("number", "Wait for completion, s (default 0)."));
     list.push(Tool("get_task", "Результат задачи",
-                   "Состояние и результат задачи, которая не успела завершиться за wait_seconds. Ответ "
-                   "готовой задачи такой же, как у исходного инструмента (с result, error и messages).",
-                   p, "task_id",
-                   true));
+                   "State/result of a task that did not finish within wait_seconds; same reply as the original tool.",
+                   p, "task_id", true));
 
     p = JVal::object();
-    p.set("button", Prop("string", "Текст кнопки, например \"OK\", \"Да\", \"Нет\", \"Отмена\"."));
-    p.set("hwnd", Prop("string", "Окно диалога (необязательно; по умолчанию активное модальное окно 1С)."));
+    p.set("button", Prop("string", "Button text: OK, Да, Нет, Отмена."));
+    p.set("hwnd", Prop("string", "Dialog window (default: active modal)."));
     list.push(Tool("dialog_button", "Нажать кнопку в диалоге",
-                   "Нажимает кнопку в модальном окне 1С (Предупреждение, Вопрос, сообщение об ошибке), "
-                   "чтобы освободить 1С. Точные названия кнопок есть в поле buttons ответа незавершённой задачи, "
-                   "а также в status (modal_window) и screen (active_modal). Нажатие ничего не ждёт: результат "
-                   "задачи, которую держало окно, забирайте через get_task.",
+                   "Presses a button in a modal 1C window to free 1C. Button names: buttons field of a pending task, "
+                   "status, screen. Does not wait; fetch the task result with get_task.",
                    p, "button", false));
 
     if(m_cfg.allowCode) {
         p = JVal::object();
-        p.set("expression", Prop("string", "Выражение на языке 1С 7.7, например ТекущаяДата() или "
-                                           "Константа.НазваниеОрганизации."));
+        p.set("expression", Prop("string", "1C 7.7 expression, e.g. ТекущаяДата()."));
         AddWaitProps(p);
         list.push(Tool("eval", "Вычислить выражение",
-                       "Вычисляет выражение встроенного языка 1С 7.7 в контексте глобального модуля и возвращает "
-                       "значение (представление и тип).",
+                       "Evaluates a 1C 7.7 expression in the global module; returns value and type.",
                        p, "expression", false));
 
         p = JVal::object();
-        p.set("code", Prop("string", "Текст на языке 1С 7.7. Можно объявлять процедуры и функции. Чтобы "
-                                     "вернуть значение, присвойте его переменной Результат (уже объявлена)."));
-        p.set("form", Prop("string", "Выполнить код в контексте открытой формы (номер из forms, hwnd или часть "
-                                     "заголовка/вида/имени файла), как будто он написан в её модуле: реквизиты "
-                                     "формы и Форма (элементы диалога) доступны по имени, например "
-                                     "Вариант = \"Остатки\"; Форма.кнВыполнить.Доступность(1). Слово Контекст здесь "
-                                     "не работает. Экспортные процедуры модуля формы - через ОткрытьФорму(...,Конт)."));
+        p.set("code", Prop("string", "1C 7.7 code; procedures/functions allowed. Assign the answer to Результат."));
+        p.set("form", Prop("string", "Run inside this open form's module context (form attributes and Форма.<id> by "
+                                     "name; the word Контекст does not work). Form: number, hwnd or title part."));
         AddWaitProps(p);
         list.push(Tool("run_code", "Выполнить код 1С",
-                       "Компилирует и выполняет фрагмент модуля на встроенном языке 1С 7.7 (доступны экспортные "
-                       "процедуры глобального модуля). Возвращает Результат, ошибку компиляции/выполнения и "
-                       "в поле messages - только те строки окна сообщений, что вывел этот код (Сообщить). "
-                       "Если код открыл модальное окно (Предупреждение, Вопрос, форма), ответ придёт с task_id, "
-                       "modal_window и buttons: закройте окно через dialog_button и заберите результат get_task.",
+                       "Compiles and runs 1C 7.7 module code. Returns Результат, errors, and messages printed by the "
+                       "code (Сообщить). A modal window gives task_id + buttons: dialog_button, then get_task.",
                        p, "code", false));
 
         p = JVal::object();
-        p.set("form", Prop("string", "Форма: номер из forms, hwnd или часть заголовка/вида/имени файла. "
-                                     "По умолчанию активная."));
-        p.set("button", Prop("string", "Кнопка или флажок: идентификатор (кнВыполнить), надпись (\"Выполнить "
-                                       "запрос\", & и регистр не важны) или id из form_controls."));
+        p.set("form", Prop("string", kFormDoc));
+        p.set("button", Prop("string", "Button or checkbox: identifier (кнВыполнить), caption or id from form_controls."));
         AddWaitProps(p);
         AddSay(p);
         list.push(Tool("press_button", "Нажать кнопку формы",
-                       "Нажимает кнопку (или флажок) открытой формы 1С так же, как пользователь мышью: 1С "
-                       "выполняет её формулу (процедуру модуля формы или системное действие #Закрыть). Скрытую или "
-                       "недоступную кнопку не нажимает. Возвращает новые строки окна сообщений и form_closed. "
-                       "Если формула открыла модальное окно - ответ придёт с task_id, как у run_code.",
+                       "Presses a form button/checkbox like a mouse click (runs its formula). Skips hidden/disabled. "
+                       "Returns new messages and form_closed.",
                        p, "button", false));
 
         p = JVal::object();
-        p.set("form", Prop("string", "Форма: номер из forms, hwnd или часть заголовка/вида/имени файла. "
-                                     "По умолчанию активная."));
-        p.set("name", Prop("string", "Имя процедуры или функции модуля формы (регистр не важен)."));
-        JVal argsProp = Prop("array", "Параметры по порядку: строки и числа. Недостающие передаются пустыми.");
+        p.set("form", Prop("string", kFormDoc));
+        p.set("name", Prop("string", "Procedure/function name in the form module."));
+        JVal argsProp = Prop("array", "Arguments in order (strings, numbers).");
         argsProp.set("items", JVal::object());
         p.set("args", argsProp);
         AddWaitProps(p);
         AddSay(p);
         list.push(Tool("call_form_procedure", "Вызвать процедуру формы",
-                       "Вызывает процедуру или функцию модуля открытой формы по имени - в том числе без Экспорт, "
-                       "как это сделал бы сам модуль (например ЗагрузитьВариант() после установки реквизита "
-                       "через run_code с form). Возвращает result функции и новые строки окна сообщений. "
-                       "Модальное окно внутри - task_id, как у run_code.",
+                       "Calls a procedure/function of an open form's module by name, also non-exported ones. "
+                       "Returns the result and new messages.",
                        p, "name", false));
 
         p = JVal::object();
-        p.set("form", Prop("string", "Форма: номер из forms, hwnd или часть заголовка. По умолчанию активная."));
-        p.set("field", Prop("string", "Реквизит формы: идентификатор, надпись или id из form_controls."));
-        p.set("value", Prop("string", "Новое значение: строка или число."));
-        p.set("expression", Prop("string", "Или выражение 1С (вместо value): Дата(2026,1,31), "
-                                           "Справочник.Валюты.НайтиПоКоду(\"USD\")..."));
+        p.set("form", Prop("string", kFormDoc));
+        p.set("field", Prop("string", "Form attribute: identifier, caption or id from form_controls."));
+        p.set("value", Prop("string", "New value: string or number."));
+        p.set("expression", Prop("string", "Or a 1C expression instead of value: Дата(2026,1,31)."));
         AddWaitProps(p);
         AddSay(p);
         list.push(Tool("set_value", "Записать значение в реквизит формы",
-                       "Присваивает реквизиту открытой формы значение (как код модуля формы) и подсвечивает поле, "
-                       "чтобы пользователь видел, что изменилось. Возвращает прежнее значение (old). Формула "
-                       "поля при этом не выполняется - как при присваивании из кода.",
+                       "Assigns a form attribute (like module code, field formula not run) and highlights the field. "
+                       "Returns the previous value (old).",
                        p, "field", false));
 
         p = JVal::object();
-        p.set("id", Prop("string", "ИД объекта: O/<вид>/<код> - документ, B/<вид>/<код> - элемент справочника; "
-                                   "код базы УРБД в скобках: O/1102/(ACC)8439502. Такой ИД даёт object_id."));
-        p.set("open", Prop("boolean", "Открыть форму объекта (по умолчанию true); false - только найти."));
+        p.set("id", Prop("string", "Object ID: O/<kind>/<code> document, B/<kind>/<code> catalog item, "
+                                   "e.g. O/1102/(ACC)8439502 (object_id gives it)."));
+        p.set("open", Prop("boolean", "Open the form (default true); false: only find."));
         AddWaitProps(p);
         AddSay(p);
         list.push(Tool("open_object", "Открыть объект по ИД",
-                       "Находит документ или элемент справочника по короткому ИД (строится из внутреннего "
-                       "представления значения ЗначениеВСтрокуВнутр: вид и код объекта, код базы УРБД) и "
-                       "открывает его форму. Возвращает тип (Документ.ПриходнаяНакладная) и представление. "
-                       "ИД в тексте пользователя вида O/.../... или B/.../... - это он.",
+                       "Finds a document/catalog item by short ID and opens its form. Returns type and presentation. "
+                       "O/.../... or B/.../... in the user's text is such an ID.",
                        p, "id", false));
 
         p = JVal::object();
-        p.set("code", Prop("number", "Код команды WM_COMMAND, например 57603 (Сохранить), 32880 (Движения "
-                                     "документа), 57600 (Новый). Коды со старшим битом от FormEx (99298) "
-                                     "тоже принимаются."));
-        p.set("form", Prop("string", "Сначала сделать активной эту форму (команда действует на активное окно)."));
+        p.set("code", Prop("number", "WM_COMMAND code, e.g. 57603 Сохранить, 32880 Движения, 57600 Новый."));
+        p.set("form", Prop("string", "Activate this form first (commands act on the active window)."));
         AddWaitProps(p);
         list.push(Tool("system_command", "Команда меню 1С",
-                       "Выполняет команду меню или панели 1С (как выбор пункта меню) для активного окна. "
-                       "Полный список кодов собран из ресурсов платформы: docs/system_commands.md в проекте 1cmcp. "
-                       "Команда может открыть окно или диалог - смотрите forms и status.",
+                       "Runs a 1C menu/toolbar command for the active window. Codes: docs/system_commands.md "
+                       "(or ui_find). May open a window: check forms, status.",
                        p, "code", false));
     }
 
     p = JVal::object();
-    p.set("kind", Prop("string", "Вид: Справочник, Документ, Регистр, Перечисление, Отчет, Обработка, Журнал, "
-                                 "Константа. Пусто - обзор всей конфигурации."));
-    p.set("name", Prop("string", "Идентификатор объекта (например Номенклатура). Пусто - список объектов вида."));
+    p.set("kind", Prop("string", "Справочник, Документ, Регистр, Перечисление, Отчет, Обработка, Журнал, Константа. "
+                                 "Empty: whole configuration."));
+    p.set("name", Prop("string", "Object identifier. Empty: list of the kind."));
     AddWaitProps(p);
     list.push(Tool("metadata", "Метаданные конфигурации",
-                   "Структура конфигурации из объекта Метаданные: без параметров - все справочники, документы, "
-                   "регистры и т.д. (Идентификатор | Синоним); с kind - список объектов вида; с kind и name - "
-                   "реквизиты (шапка и табличная часть документа, измерения и ресурсы регистра, значения "
-                   "перечисления) с типами, длиной и признаком периодичности. Имена реквизитов годятся и для "
-                   "запросов 1sqlite.",
+                   "Configuration structure: no args - all objects; kind - objects of the kind; kind+name - "
+                   "attributes (header, table part, dimensions, resources, enum values) with type, length, periodicity.",
                    p, NULL, true));
 
     p = JVal::object();
-    p.set("form", Prop("string", "Окно таблицы: номер из forms, hwnd или часть заголовка. По умолчанию активное."));
-    p.set("from_row", Prop("number", "С какой строки (1 = первая). Для продолжения - next_from_row из ответа."));
-    p.set("max_rows", Prop("number", "Максимум строк (по умолчанию 200)."));
-    p.set("max_columns", Prop("number", "Максимум колонок (по умолчанию 50)."));
+    p.set("form", Prop("string", "Table window: number, hwnd or title part. Default: active."));
+    p.set("from_row", Prop("number", "First row (1-based); continue with next_from_row."));
+    p.set("max_rows", Prop("number", "Default 200."));
+    p.set("max_columns", Prop("number", "Default 50."));
     AddWaitProps(p);
     AddSay(p);
     list.push(Tool("read_table", "Прочитать таблицу",
-                   "Текст ячеек открытого табличного документа (окно вида Таблица: результат отчёта, "
-                   "печатная форма, Таблица.Показать()) - то, что видит пользователь. rows - массив строк, "
-                   "каждая - массив текстов ячеек слева направо (пустые в конце строки отброшены); "
-                   "номер строки = from_row + индекс. Большие таблицы читайте частями через next_from_row.",
+                   "Cell texts of an open spreadsheet window (report result, print form). rows: array of arrays, "
+                   "row number = from_row + index. Read big tables in parts.",
                    p, NULL, true));
 
     p = JVal::object();
-    p.set("form", Prop("string", "Форма документа, справочника или журнала: ИД её текущего объекта (строки)."));
-    p.set("expression", Prop("string", "Или выражение 1С, дающее документ/элемент справочника "
-                                       "(например Константа.ОсновнаяФирма)."));
+    p.set("form", Prop("string", "Document/catalog/journal form: ID of its current object."));
+    p.set("expression", Prop("string", "Or a 1C expression giving a document/catalog item."));
     AddWaitProps(p);
     list.push(Tool("object_id", "ИД объекта",
-                   "Короткий ИД документа (O/<вид>/<код>) или элемента справочника (B/<вид>/<код>, код "
-                   "базы УРБД в скобках) - текущего объекта открытой формы или значения выражения. "
-                   "По ИД объект открывает open_object.",
+                   "Short ID (O/<kind>/<code> document, B/<kind>/<code> item) of the form's current object or an "
+                   "expression value. open_object opens by ID.",
                    p, NULL, true));
 
     p = JVal::object();
-    p.set("form", Prop("string", "Форма: номер из forms, hwnd или часть заголовка. По умолчанию активная."));
-    p.set("control", Prop("string", "Элемент: идентификатор, надпись или id из form_controls. Пусто - вся форма."));
-    p.set("mode", Prop("string", "По умолчанию: поле ввода - заливка цветом (как ЦветФона в FormEx) и рамка, "
-                                 "остальное - анимированная рамка. frame - только рамка; color - то же, что по "
-                                 "умолчанию (цвет виден только у полей ввода)."));
-    p.set("seconds", Prop("number", "Сколько секунд держать подсветку (по умолчанию 2, максимум 30)."));
-    p.set("command", Prop("number", "Обвести кнопки панелей инструментов с этой командой (код из ui_find)."));
-    p.set("toolbar", Prop("string", "Обвести панель инструментов целиком (часть названия: Стандартная, Сервис)."));
+    p.set("form", Prop("string", kFormDoc));
+    p.set("control", Prop("string", "Identifier, caption or id from form_controls. Empty: whole form."));
+    p.set("mode", Prop("string", "default: input fields get colour fill + frame, others animated frame; "
+                                 "frame: frame only."));
+    p.set("seconds", Prop("number", "Duration (default 2, max 30)."));
+    p.set("command", Prop("number", "Frame toolbar buttons with this command (from ui_find)."));
+    p.set("toolbar", Prop("string", "Frame a whole toolbar (title part: Стандартная, Сервис)."));
     AddWaitProps(p);
     AddSay(p);
     {
         JVal q = JVal::object();
-        q.set("text", Prop("string", "Текст надписи (на языке из instructions)."));
-        q.set("form", Prop("string", "Форма (номер, hwnd, часть заголовка); по умолчанию активная."));
-        q.set("control", Prop("string", "Элемент формы, у которого показать надпись; пусто - у формы."));
-        q.set("command", Prop("number", "Или кнопка панели инструментов с этой командой (из ui_find)."));
-        q.set("toolbar", Prop("string", "Или панель инструментов (часть названия)."));
-        q.set("seconds", Prop("number", "Сколько секунд показывать (по умолчанию 4)."));
+        q.set("text", Prop("string", "Note text."));
+        q.set("form", Prop("string", kFormDoc));
+        q.set("control", Prop("string", "Form control to point at; empty: the form."));
+        q.set("command", Prop("number", "Or a toolbar button with this command."));
+        q.set("toolbar", Prop("string", "Or a toolbar (title part)."));
+        q.set("seconds", Prop("number", "Duration (default 4)."));
         AddWaitProps(q);
         list.push(Tool("caption", "Надпись на экране",
-                       "Показывает пользователю облачко с текстом рядом с элементом формы, формой или кнопкой "
-                       "панели (с рамкой вокруг цели). Для пояснений и демо-режима. Ничего не меняет в 1С.",
+                       "Shows the user a callout note next to a form control, form or toolbar button. Changes nothing in 1C.",
                        q, "text", true));
     }
     list.push(Tool("highlight", "Показать элемент",
-                   "Подсвечивает элемент формы или всю форму, чтобы показать пользователю, о чём речь "
-                   "(\"вот это поле\"). Действия агента подсвечиваются и сами: press_button - красная рамка "
-                   "вокруг кнопки, run_code с form, call_form_procedure, read_table, open_object - синяя рамка "
-                   "вокруг формы.",
+                   "Highlights a form control or whole form to show the user what you mean. Agent actions are "
+                   "highlighted automatically.",
                    p, NULL, true));
 
     p = JVal::object();
-    p.set("text", Prop("string", "Что искать: часть названия пункта меню или подсказки кнопки (Продажи, Табло)."));
+    p.set("text", Prop("string", "Part of a menu item name or button tooltip (Продажи, Табло)."));
     AddWaitProps(p);
     list.push(Tool("ui_find", "Найти в интерфейсе",
-                   "Ищет команду в главном меню 1С (полный путь, код команды, доступность) и на панелях "
-                   "инструментов (какая панель, координаты, подсказка кнопки). Для подсказок пользователю "
-                   "\"где это в программе\": затем highlight с command (кнопка на панели) или show_menu "
-                   "(раскрыть меню до пункта).",
+                   "Finds a command in the main menu (path, code, enabled) and toolbars (toolbar, position, tooltip). "
+                   "Then highlight with command or show_menu.",
                    p, "text", true));
 
     p = JVal::object();
-    p.set("command", Prop("number", "Код команды из ui_find."));
-    p.set("path", Prop("string", "Или путь пункта меню: \"Сервис > Табло\" (можно часть)."));
-    p.set("seconds", Prop("number", "Сколько секунд держать меню открытым (по умолчанию 5)."));
+    p.set("command", Prop("number", "Command code from ui_find."));
+    p.set("path", Prop("string", "Or menu path: \"Сервис > Табло\" (part allowed)."));
+    p.set("seconds", Prop("number", "Keep open, s (default 5)."));
     AddWaitProps(p);
     AddSay(p);
     list.push(Tool("show_menu", "Показать пункт меню",
-                   "Раскрывает главное меню 1С до пункта (как пользователь стрелками с клавиатуры), обводит "
-                   "пункт рамкой и через seconds закрывает меню. Сам пункт не выбирает. Отвечает сразу, "
-                   "меню раскрывается следом за ответом.",
+                   "Opens the main menu down to the item, frames it, closes after seconds. Does not select it. "
+                   "Replies at once.",
                    p, NULL, true));
 
     p = JVal::object();
     AddWaitProps(p);
     list.push(Tool("forms", "Открытые формы",
-                   "Список открытых окон-форм 1С (сверху активная): номер, заголовок, вид (Документ, Справочник, "
-                   "Журнал, ВнешнийОтчет, Таблица, Текст...), полный тип (Справочник.Товары.ФормаСписка), файл "
-                   "внешнего отчёта, режим выбора. Номер или часть заголовка передаётся в form других инструментов.",
+                   "Open form windows (active first): number, title, kind, full type, external report file, "
+                   "choice mode. Pass number or title part as form to other tools.",
                    p, NULL, true));
 
     p = JVal::object();
-    p.set("form", Prop("string", "Форма: номер из forms, hwnd или часть заголовка/вида/имени файла. По умолчанию "
-                                 "активная."));
-    p.set("values", Prop("boolean", "Показывать текущие значения реквизитов (по умолчанию true)."));
+    p.set("form", Prop("string", kFormDoc));
+    p.set("values", Prop("boolean", "Include attribute values (default true)."));
     AddWaitProps(p);
     list.push(Tool("form_controls", "Элементы формы",
-                   "Элементы диалога открытой формы: id, вид (кнопка, флажок, поле...), идентификатор, надпись, "
-                   "формула (что выполняется при нажатии), слой, видимость, доступность и значение реквизита. "
-                   "Работает и для форм конфигурации, и для внешних отчётов.",
+                   "Dialog controls of an open form: id, kind, identifier, caption, formula, layer, visibility, "
+                   "availability, value.",
                    p, NULL, true));
 
     p = JVal::object();
-    p.set("from_line", Prop("number", "Вернуть строки начиная с этого номера (1 = с начала). По умолчанию - "
-                                      "последние max_lines."));
-    p.set("max_lines", Prop("number", "Максимум строк (по умолчанию 100)."));
+    p.set("from_line", Prop("number", "Start line (1-based). Default: last max_lines."));
+    p.set("max_lines", Prop("number", "Default 100."));
     AddWaitProps(p);
     list.push(Tool("read_messages", "Окно сообщений",
-                   "Текст окна сообщений 1С (Сообщить, ошибки выполнения). В окне могут быть строки, "
-                   "выведенные до вас: чтобы видеть только новые, запомните total_lines и потом передайте "
-                   "total_lines+1 в from_line. Вывод своего кода удобнее брать из поля messages ответа run_code.",
+                   "Text of the 1C message window. To see only new lines remember total_lines and pass total_lines+1 "
+                   "as from_line. Output of your own code: messages field of run_code.",
                    p, NULL, true));
 
     p = JVal::object();
     AddWaitProps(p);
-    list.push(Tool("clear_messages", "Очистить окно сообщений", "Очищает окно сообщений 1С.", p, NULL, false));
+    list.push(Tool("clear_messages", "Очистить окно сообщений", "Clears the 1C message window.", p, NULL, false));
     return list;
 }
 

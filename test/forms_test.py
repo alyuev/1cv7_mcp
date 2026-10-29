@@ -33,7 +33,9 @@ def check(ok, what, detail=None):
         fails += 1
 
 
-names = [t["name"] for t in rpc("tools/list")["result"]["tools"]]
+_tl = rpc("tools/list")["result"]
+print("tools/list size:", len(json.dumps(_tl, ensure_ascii=False).encode("utf-8")), "bytes")
+names = [t["name"] for t in _tl["tools"]]
 check(all(n in names for n in ("forms", "form_controls", "press_button", "system_command")), "tools/list has form tools", names)
 
 f, err = call("forms")
@@ -162,7 +164,7 @@ check(not err, "caption at the active form", cp)
 cp, err = call("highlight", form="Автотест", control="флДаты", seconds=1, say="надпись у флажка")
 check(not err and cp.get("mode") == "frame", "highlight with say", cp)
 init = rpc("initialize", {"protocolVersion": "2025-06-18"})["result"]
-check("prompts" in init["capabilities"] and "Язык надписей" in init["instructions"], "initialize: prompts capability, language", init)
+check("prompts" in init["capabilities"] and "Language of on-screen notes" in init["instructions"], "initialize: prompts capability, language", init)
 
 m, err = call("metadata", kind="справочник", name="тмц")
 check(not err and isinstance(m, str) and m.startswith("Справочник.ТМЦ") and "ДатаСоздания" in m and "Дата" in m,
