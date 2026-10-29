@@ -462,13 +462,19 @@ static std::string DemoScript(const std::string& lang) {
            "4. form_controls: find date fields (value_type Дата), a text/number field, checkboxes, and the "
            "button that builds the report (title like Сформировать / Выполнить / ОК / Build).\n"
            "5. For 2-4 fields: set_value with a sensible value and say (e.g. the start of the current month for "
-           "a period start). For 1-2 checkboxes: press_button on the checkbox with say (checkboxes only!).\n"
+           "a period start; expression НачМесяца(ТекущаяДата())). Remember every `old` value set_value returns. "
+           "For 1-2 checkboxes: press_button on the checkbox with say (checkboxes only!).\n"
            "6. highlight the build button with say: 'now the report can be built - press it yourself' "
            "(in " + L + "). Do NOT press it - the run time is unknown.\n"
-           "7. Optionally ui_find for the report name and show_menu with say: where this report is in the menu.\n"
+           "7. Optionally: ui_find with the report's synonym (from metadata). Use a menu item ONLY if its path "
+           "really names this report (ui_find matches parts of words: 'Опер' also finds 'Операции'). If there is "
+           "none, show_menu the general list of reports (command 33856, Операции > Отчеты...) and say that the "
+           "report is chosen there.\n"
            "8. caption with a short summary of what the AI can do here (forms, values, buttons, menus, "
-           "reports, messages). Then close the report form: system_command 57602 with form=<the report> "
-           "(answer 'No'/'Нет' via dialog_button if 1C asks to save).\n"
+           "reports, messages). Then put the changed attributes back (set_value with the remembered old values, "
+           "press the checkboxes again) - a report may save its settings on closing - and close the form with "
+           "its own close button: press_button on the button whose formula is #Закрыть (form_controls) "
+           "(answer 'No'/'Нет' via dialog_button if 1C asks to save). Check forms: the report is gone.\n"
            "Report to the user in chat what was shown.";
 }
 

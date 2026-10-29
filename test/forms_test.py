@@ -156,7 +156,7 @@ call("set_value", form="Автотест", field="ИмяВК", expression='""')
 
 pl = rpc("prompts/list")["result"]["prompts"]
 pg = rpc("prompts/get", {"name": "demo", "arguments": {"language": "en"}})["result"]["messages"][0]["content"]["text"]
-check([p["name"] for p in pl] == ["demo"] and "in English" in pg and "Do NOT press" in pg, "prompts: demo scenario, language", pl)
+check([p["name"] for p in pl] == ["demo"] and "in English" in pg and "Do NOT press" in pg and "#Закрыть" in pg, "prompts: demo scenario, language", pl)
 cp, err = call("caption", text="проверка надписи", seconds=1)
 check(not err, "caption at the active form", cp)
 cp, err = call("highlight", form="Автотест", control="флДаты", seconds=1, say="надпись у флажка")
