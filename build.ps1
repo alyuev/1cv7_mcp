@@ -66,5 +66,9 @@ if ($LASTEXITCODE -ne 0) { $o | ForEach-Object { Write-Host $_ }; Pop-Location; 
 # link cwd = project dir so the relative lib pragmas in StdAfx.cpp resolve
 $syslibs = @('kernel32.lib','user32.lib','gdi32.lib','advapi32.lib','ole32.lib','oleaut32.lib','uuid.lib','comctl32.lib','version.lib','ws2_32.lib')
 Link (@('/nologo','/DLL','/subsystem:windows','/IGNORE:4089','/OUT:build\1cmcp.dll','obj\1cmcp.obj','obj\forms.obj','obj\ui.obj','obj\optpage.obj','obj\StdAfx.obj') + $coreObj + @('obj\1cmcp.res') + $syslibs) '1cmcp.dll'
+# syntax help next to the DLL: regenerate 1cmcp.als (version from core\mcp_version.h) and copy it to build\
+$py = Get-Command python -ErrorAction SilentlyContinue
+if ($py) { & $py.Source -I (Join-Path $proj 'docs\make_als.py') | Out-Null }
+Copy-Item (Join-Path $proj '1cmcp.als') (Join-Path $out '1cmcp.als') -Force
 Pop-Location
 Write-Host "BUILD OK -> $out" -ForegroundColor Green
