@@ -113,10 +113,12 @@ t, err = call("read_table", form="Тест таблицы", from_row=2, max_rows
 check(not err and t.get("rows") == [["Иванов", "100"]] and t.get("next_from_row") == 3, "read_table: paging", t)
 t, err = call("read_table", form="Автотест")
 check(err and "не табличный" in t.get("error", ""), "read_table on a dialog form is an error", t)
-call("system_command", code=57602, form="Тест таблицы", wait_seconds=3)  # Файл > Закрыть
+cf, _ = call("close_form", form="Тест таблицы", wait_seconds=3)
 st, _ = call("status")
 if isinstance(st, dict) and st.get("modal"):  # "save changes?" - answer No
     call("dialog_button", button="Нет")
+fl, _ = call("forms")
+check("Тест таблицы" not in json.dumps(fl, ensure_ascii=False), "close_form: the table window is closed", cf)
 
 code = ('Спр = СоздатьОбъект("Справочник.ТМЦ");\n'
         'Если Спр.НайтиПоНаименованию("MCP тест") = 0 Тогда\n'

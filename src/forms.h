@@ -57,6 +57,8 @@ bool McpHighlight(const McpForm& f, const std::string& control, const std::strin
                   std::string& err);
 // control by identifier/title/id -> identifier (CP1251) and window class
 bool McpFindField(const McpForm& f, const std::string& name, std::string& codeName, std::string& cls);
+// close the form window the way the user does (the X button): 1C may ask about saving
+bool McpCloseForm(const McpForm& f, std::string& err, JVal& info);
 bool McpReadTable(const McpForm& f, int fromRow, int maxRows, int maxCols, JVal& out, std::string& err);
 
 #endif

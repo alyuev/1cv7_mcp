@@ -824,6 +824,15 @@ JVal McpServer::ToolsList() {
                        p, "id", false));
 
         p = JVal::object();
+        p.set("form", Prop("string", kFormDoc));
+        AddWaitProps(p);
+        AddSay(p);
+        list.push(Tool("close_form", "Закрыть форму",
+                       "Closes an open form/table/text window like the X button (1C may ask about saving: "
+                       "then dialog_button). Returns closed.",
+                       p, NULL, false));
+
+        p = JVal::object();
         p.set("code", Prop("number", "WM_COMMAND code, e.g. 57603 Сохранить, 32880 Движения, 57600 Новый."));
         p.set("form", Prop("string", "Activate this form first (commands act on the active window)."));
         AddWaitProps(p);
@@ -964,7 +973,7 @@ JVal McpServer::CallTool(const std::string& name, const JVal& args, bool& isErro
         if(!m_cfg.allowCode) { isError = true; text = "выполнение кода запрещено в настройках компоненты"; }
         else text = Run1C(name, args, isError, pending);
     } else if(name == "press_button" || name == "system_command" || name == "call_form_procedure" ||
-              name == "open_object" || name == "set_value") {
+              name == "open_object" || name == "set_value" || name == "close_form") {
         // a button formula or a command can do anything a user can: same switch as code
         if(!m_cfg.allowCode) { isError = true; text = "нажатие кнопок и команды запрещены в настройках компоненты"; }
         else text = Run1C(name, args, isError, pending);

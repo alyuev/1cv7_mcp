@@ -819,6 +819,26 @@ bool McpPressButton(const McpForm& f, const std::string& button, std::string& er
     return true;
 }
 
+bool McpCloseForm(const McpForm& f, std::string& err, JVal& info) {
+    HWND fr = f.frame;
+    if(!fr || !IsWindow(fr)) {
+        err = Cp1251ToUtf8("окно формы уже закрыто");
+        return false;
+    }
+    int hl = McpFlash(fr, MCP_HL_ACTION, 900);
+    // WM_CLOSE = the X button of the window: a table/text/form is closed by 1C itself, with its own
+    // question about saving when something was changed (a modal window then makes the task pending)
+    SendMessage(fr, WM_CLOSE, 0, 0);
+    bool closed = !IsWindow(fr);
+    if(!closed) McpFlashRestart(hl);
+    info.set("closed", JVal::boolean(closed));
+    if(!closed) {
+        err = Cp1251ToUtf8("форма не закрылась: 1С не дала закрыть окно (отказ от сохранения или вопрос; см. status)");
+        return false;
+    }
+    return true;
+}
+
 bool McpSystemCommand(long code, const McpForm* f, std::string& err) {
     if(code >= 0x10000) code -= 0x10000;  // FormEx reports some commands with this bit set
     if(code <= 0 || code > 0xFFFF) {

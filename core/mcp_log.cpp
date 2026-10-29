@@ -159,6 +159,8 @@ std::string McpDescribeCall(const std::string& tool, const JVal& a, const std::s
         if(Str(a, "kind").empty()) d += L(lang, "обзор конфигурации", "configuration overview", "преглед на конфигурацията");
         else if(Str(a, "name").empty()) d += L(lang, "список объектов вида ", "objects of kind ", "обекти от вид ") + Q(lang, Str(a, "kind"));
         else d += Q(lang, Str(a, "kind") + "." + Str(a, "name"));
+    } else if(tool == "close_form") {
+        d = L(lang, "Закрывает окно", "Closes the window", "Затваря прозореца") + OnForm(lang, a);
     } else if(tool == "read_table") {
         d = L(lang, "Читает ячейки таблицы", "Reads the cells of a table", "Чете клетките на таблица") + OnForm(lang, a);
         if(!Num(a, "from_row").empty()) d += L(lang, ", с строки ", ", from row ", ", от ред ") + Num(a, "from_row");

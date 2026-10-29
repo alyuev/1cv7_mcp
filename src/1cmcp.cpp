@@ -458,6 +458,22 @@ class CMcpHost : public McpHost {
             text = r.dump();
             return ok;
         }
+        if(tool == "close_form") {
+            McpForm f;
+            std::string err;
+            if(!McpFindForm(args, f, err)) {
+                text = Error(err);
+                return false;
+            }
+            JVal r = JVal::object();
+            r.set("form", McpFormJson(f));
+            JVal info = JVal::object();
+            bool ok = McpCloseForm(f, err, info);
+            r.set("closed", info.get("closed"));
+            if(!ok) r.set("error", JVal::string(err));
+            text = r.dump();
+            return ok;
+        }
         if(tool == "forms") {
             JVal r = JVal::object();
             r.set("forms", McpFormsJson());
