@@ -128,10 +128,10 @@ static std::string ValueJson(const CValue& v, JVal& out) {
 }
 
 
-// ---------------------------------------------------------------- object IDs "O/1102/(ACC)8439502"
+// ---------------------------------------------------------------- object IDs "O/1102/(AB)1234567"
 // Short ID of a document (O) or catalog item (B) built from the platform's internal value string
 // ЗначениеВСтрокуВнутр = {"O","0","0","<kind>","0","0","<10-char code><3-char УРБД code>"}:
-// <letter>/<kind>/[(<УРБД>)]<code>. Same scheme as глПолучитьИД / ОбъектПоСтрокеИД_МЛГ in Cactus.
+// <letter>/<kind>/[(<УРБД>)]<code>.
 static std::string Trim(const std::string& s) {
     size_t a = s.find_first_not_of(' '), b = s.find_last_not_of(' ');
     return a == std::string::npos ? "" : s.substr(a, b - a + 1);
@@ -357,7 +357,7 @@ class CMcpHost : public McpHost {
             std::string id = Trim(Utf8ToCp1251(args.get("id").asStr())), in;
             if(!IdToInternal(id, in)) {
                 text = Error(Cp1251ToUtf8("ИД должен быть вида O/<вид>/<код> (документ) или B/<вид>/<код> "
-                                          "(элемент справочника), код УРБД в скобках: O/1102/(ACC)8439502"));
+                                          "(элемент справочника), код УРБД в скобках: O/1102/(AB)1234567"));
                 return false;
             }
             bool open = args.get("open").asBool(true);

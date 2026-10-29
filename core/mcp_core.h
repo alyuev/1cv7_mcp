@@ -127,7 +127,7 @@ class McpServer {
     int m_runningTask;
     LONG m_inQueue;
     CRITICAL_SECTION m_auditCs;
-    std::string m_who;  // "Al@GEEKOM #7316"
+    std::string m_who;  // "User@PC #7316"
 
     struct Session {
         std::string id, client, version, protocol, ip;

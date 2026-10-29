@@ -242,7 +242,7 @@ static CString Kind(const McpCtrl& m) {
     if(m.cls == "ComboBox") return "поле со списком";
     if(m.cls == "ListBox") return "список";
     if(m.cls == "SysTabControl32") return "закладки";
-    // buttons drawn by add-ins (FormEx/1C++ in Cactus): MFC windows "Afx:400000:3:..." instead of "Button"
+    // buttons drawn by add-ins (FormEx/1C++): MFC windows "Afx:400000:3:..." instead of "Button"
     if(m.cls.Left(4) == "Afx:") return "кнопка";
     return m.cls;
 }

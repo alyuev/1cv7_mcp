@@ -814,7 +814,7 @@ JVal McpServer::ToolsList() {
 
         p = JVal::object();
         p.set("id", Prop("string", "Object ID: O/<kind>/<code> document, B/<kind>/<code> catalog item, "
-                                   "e.g. O/1102/(ACC)8439502 (object_id gives it)."));
+                                   "e.g. O/1102/(AB)1234567 (object_id gives it)."));
         p.set("open", Prop("boolean", "Open the form (default true); false: only find."));
         AddWaitProps(p);
         AddSay(p);
