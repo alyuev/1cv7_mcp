@@ -52,7 +52,9 @@ BOOL McpMsgOpen(CString& err) {
         g_doc = NULL;
         return FALSE;
     }
-    w->data[3] = 0x0F31;  // as FormEx: border style, no stored size
+    // the border/gripper style lives in data[11] (1C's own docked windows have 0x0F31 there: the gripper with the
+    // close button); FormEx writes data[3], which is another field in our header layout
+    w->data[11] = 0x0F31;
     w->data[34] = 0;
     w->data[35] = 0;
     w->EnableDocking(CBRS_ALIGN_ANY);
