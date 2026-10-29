@@ -132,14 +132,23 @@ s = json.loads(tool("screen"))
 dlg = int(s["active_modal"]["hwnd"], 16)  # still the options window
 
 NEW_PORT, NEW_TOKEN = 18781, "page-token-0123456789"
+LOGDIR = os.path.join(os.path.dirname(INI), "pagelog")
+LOGFILE = os.path.join(LOGDIR, "mcp_calls.log")   # a folder that does not exist yet
+for f_ in (LOGFILE,):
+    if os.path.exists(f_):
+        os.remove(f_)
 win32gui.SendMessage(ctrls[3101], win32con.WM_SETTEXT, 0, str(NEW_PORT))   # IDC_PORT
 win32gui.SendMessage(ctrls[3103], win32con.WM_SETTEXT, 0, NEW_TOKEN)        # IDC_TOKEN
+win32gui.SendMessage(ctrls[3114], win32con.WM_SETTEXT, 0, LOGFILE)          # IDC_LOGFILE
+if win32gui.SendMessage(ctrls[3116], win32con.BM_GETCHECK, 0, 0) != win32con.BST_CHECKED:
+    win32gui.PostMessage(ctrls[3116], win32con.BM_CLICK, 0, 0)               # IDC_ACTIONWIN
 time.sleep(0.3)
 print(tool("dialog_button", {"button": "Применить"}))
 time.sleep(1.5)
 ini = open(INI, encoding="cp1251").read() if INI else ""
 ini_ok = ("Port=%d" % NEW_PORT) in ini and ("Token=" + NEW_TOKEN) in ini
-print("ini saved:", ini_ok)
+ini_ok = ini_ok and ("LogFile=" + LOGFILE) in ini and "ActionWindow=1" in ini
+print("ini saved (port, token, LogFile, ActionWindow):", ini_ok)
 URL, TOKEN = "http://127.0.0.1:%d/mcp" % NEW_PORT, NEW_TOKEN
 try:
     restarted = "1cmcp" in json.loads(tool("status")).get("server", "")
@@ -147,6 +156,23 @@ except Exception as e:
     restarted = False
     print("new endpoint error:", e)
 print("server restarted on new port/token:", restarted)
+# the call log goes to the file typed on the page (its folder is created), with the 1C user and pid in every line
+time.sleep(0.5)
+tool("status")
+log_ok = False
+try:
+    txt = open(LOGFILE, "rb").read().decode("utf-8-sig")
+    start = [l for l in txt.splitlines() if "ЗАПУСК сервера MCP" in l and "127.0.0.1:%d" % NEW_PORT in l]
+    log_ok = bool(start) and "ВЫЗОВ status" in txt and "@" in start[0] and " #" in start[0] and "mcp_calls.log" in start[0]
+    print("log file:", LOGFILE, "->", start[0][:160] if start else txt[:200])
+except Exception as e:
+    print("log file error:", e)
+print("log written to the path from the page:", log_ok)
+# the window of the server's actions is open
+win_r = json.loads(tool("run_code", {"code": 'О = СоздатьОбъект("MCPСервер");\nРезультат = О.ОкноДействий(-1);', "allow_modal": True}))
+win_ok = win_r.get("result", {}).get("value") == "1"
+print("actions window open:", win_ok)
+ini_ok = ini_ok and log_ok and win_ok
 
 print(tool("dialog_button", {"button": "OK"}))
 time.sleep(0.5)

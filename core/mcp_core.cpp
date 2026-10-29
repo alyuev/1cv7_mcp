@@ -5,7 +5,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "mcp_core.h"
+#include <io.h>
 #include "textconv.h"
+#include "mcp_log.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -116,9 +118,10 @@ static bool TokenEquals(const std::string& a, const std::string& b) {
 // ======================================================================
 McpServer::McpServer()
     : m_host(NULL), m_listen((unsigned int)INVALID_SOCKET), m_acceptThread(NULL), m_running(0), m_conns(0),
-      m_requests(0), m_startTick(0), m_nextTaskId(1), m_runningTask(0), m_inQueue(0) {
+      m_requests(0), m_startTick(0), m_nextTaskId(1), m_runningTask(0), m_inQueue(0), m_lastRejectReport(0) {
     InitializeCriticalSection(&m_cs);
     InitializeCriticalSection(&m_auditCs);
+    InitializeCriticalSection(&m_sesCs);
 }
 
 McpServer::~McpServer() {
@@ -129,12 +132,22 @@ McpServer::~McpServer() {
     }
     DeleteCriticalSection(&m_cs);
     DeleteCriticalSection(&m_auditCs);
+    DeleteCriticalSection(&m_sesCs);
 }
 
 bool McpServer::Start(const McpConfig& cfg, McpHost* host, std::string& err) {
     if(m_running) { err = "server already running"; return false; }
     m_cfg = cfg;
     m_host = host;
+    m_cfg.language = McpLang(m_cfg.language);
+    m_who = (m_cfg.userName.empty() ? std::string("?") : m_cfg.userName) + "@" +
+            (m_cfg.computer.empty() ? std::string("?") : m_cfg.computer);
+    {
+        char pb[32];
+        sprintf(pb, " #%lu", m_cfg.pid);
+        m_who += pb;
+    }
+    m_sessions.clear();
     if(m_cfg.bindAddr.empty()) m_cfg.bindAddr = "127.0.0.1";
     // no anonymous mode, not even on 127.0.0.1: any local program could run 1C code otherwise
     err = McpCheckToken(m_cfg.token);
@@ -172,9 +185,12 @@ bool McpServer::Start(const McpConfig& cfg, McpHost* host, std::string& err) {
         err = "cannot start accept thread";
         return false;
     }
-    char buf[160];
-    sprintf(buf, "START %s:%d", m_cfg.bindAddr.c_str(), m_cfg.port);
-    Audit(buf);
+    char buf[320];
+    sprintf(buf, "ЗАПУСК сервера MCP %s: адрес %s:%d, пользователь 1С %s, код 1С %s, журнал вызовов: ", MCP_VERSION,
+            m_cfg.bindAddr.c_str(), m_cfg.port, m_cfg.userName.c_str(), m_cfg.allowCode ? "разрешён" : "запрещён");
+    Audit(std::string(buf) + Cp1251ToUtf8(m_cfg.auditPath));
+    sprintf(buf, " %s:%d (%s)", m_cfg.bindAddr.c_str(), m_cfg.port, m_cfg.userName.c_str());
+    Report(McpWord("started", m_cfg.language) + buf, MCP_REP_INFO);
     return true;
 }
 
@@ -199,7 +215,8 @@ void McpServer::Stop() {
     }
     LeaveCriticalSection(&m_cs);
     for(int w = 0; w < 100 && m_conns > 0; w++) Sleep(50);
-    Audit("STOP");
+    Audit("ОСТАНОВ сервера MCP");
+    Report(McpWord("stopped", m_cfg.language), MCP_REP_INFO);
     WSACleanup();
 }
 
@@ -285,6 +302,13 @@ void McpServer::ServeConnection(unsigned int sock) {
     SOCKET s = (SOCKET)sock;
     int tmo = 60000;
     setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo, sizeof(tmo));
+    McpReqCtx peer;
+    {
+        sockaddr_in pa;
+        int pl = sizeof(pa);
+        memset(&pa, 0, sizeof(pa));
+        if(getpeername(s, (sockaddr*)&pa, &pl) == 0) peer.ip = inet_ntoa(pa.sin_addr);
+    }
     std::string buf;
     for(int reqNo = 0; reqNo < 1000 && m_running; reqNo++) {
         // ---- headers ----
@@ -319,7 +343,7 @@ void McpServer::ServeConnection(unsigned int sock) {
         size_t q = path.find('?');
         if(q != std::string::npos) path.erase(q);
 
-        std::string auth, origin, conn;
+        std::string auth, origin, conn, sid;
         long clen = 0;
         size_t pos = eol == std::string::npos ? head.size() : eol + 2;
         while(pos < head.size()) {
@@ -336,6 +360,7 @@ void McpServer::ServeConnection(unsigned int sock) {
             else if(name == "authorization") auth = val;
             else if(name == "origin") origin = val;
             else if(name == "connection") conn = Lower(val);
+            else if(name == "mcp-session-id") sid = val;
             else if(name == "transfer-encoding") {
                 SendResponse(s, 411, "Length Required", "text/plain", "chunked bodies are not supported", false);
                 return;
@@ -367,15 +392,26 @@ void McpServer::ServeConnection(unsigned int sock) {
             if(!keep) return;
             continue;
         }
+        peer.session = sid.size() > 64 ? sid.substr(0, 64) : sid;
         if(!OriginAllowed(origin)) {
-            Audit("REJECT origin " + origin);
+            Audit("- " + peer.ip, "ОТКЛОНЕНО: чужой заголовок Origin " + McpShort(origin, 100));
+            if(GetTickCount() - m_lastRejectReport > 10000) {
+                m_lastRejectReport = GetTickCount();
+                Report(McpWord("rejected", m_cfg.language) + ": " + McpWord("badorigin", m_cfg.language) + " (" + peer.ip + ")",
+                       MCP_REP_WARN);
+            }
             SendResponse(s, 403, "Forbidden", "text/plain", "origin not allowed", false);
             return;
         }
         {
             std::string expect = "Bearer " + m_cfg.token;
             if(!TokenEquals(auth, expect)) {
-                Audit("REJECT bad token");
+                Audit("- " + peer.ip, "ОТКЛОНЕНО: неверный или отсутствующий токен");
+                if(GetTickCount() - m_lastRejectReport > 10000) {  // the window gets one note per 10 s
+                    m_lastRejectReport = GetTickCount();
+                    Report(McpWord("rejected", m_cfg.language) + ": " + McpWord("badtoken", m_cfg.language) + " (" + peer.ip + ")",
+                           MCP_REP_WARN);
+                }
                 Sleep(200);  // slow down guessing
                 SendResponse(s, 401, "Unauthorized", "application/json",
                              "{\"error\":\"invalid or missing bearer token\"}", keep,
@@ -391,11 +427,15 @@ void McpServer::ServeConnection(unsigned int sock) {
             continue;
         }
         int status = 200;
-        std::string out = HandleRpc(body, status);
+        std::string newSession;
+        std::string out = HandleRpc(body, status, &peer, &newSession);
+        std::string extra;
+        if(!newSession.empty()) extra = "Mcp-Session-Id: " + newSession + "\r\n";
         if(status == 202)
-            SendResponse(s, 202, "Accepted", "application/json", "", keep);
+            SendResponse(s, 202, "Accepted", "application/json", "", keep, extra.empty() ? NULL : extra.c_str());
         else
-            SendResponse(s, status, status == 200 ? "OK" : "Bad Request", "application/json", out, keep);
+            SendResponse(s, status, status == 200 ? "OK" : "Bad Request", "application/json", out, keep,
+                         extra.empty() ? NULL : extra.c_str());
         if(!keep) return;
     }
 }
@@ -411,7 +451,10 @@ static JVal RpcError(const JVal& id, int code, const std::string& msg) {
     return r;
 }
 
-std::string McpServer::HandleRpc(const std::string& body, int& httpStatus) {
+std::string McpServer::HandleRpc(const std::string& body, int& httpStatus, const McpReqCtx* ctxIn,
+                                 std::string* newSession) {
+    McpReqCtx ctx;
+    if(ctxIn) ctx = *ctxIn;
     JVal msg;
     std::string err;
     httpStatus = 200;
@@ -422,13 +465,13 @@ std::string McpServer::HandleRpc(const std::string& body, int& httpStatus) {
     if(msg.isArr()) {
         JVal out = JVal::array();
         for(size_t i = 0; i < msg.size(); i++) {
-            JVal r = Dispatch(msg.at(i));
+            JVal r = Dispatch(msg.at(i), ctx, newSession);
             if(!r.isNull()) out.push(r);
         }
         if(out.size() == 0) { httpStatus = 202; return ""; }
         return out.dump();
     }
-    JVal r = Dispatch(msg);
+    JVal r = Dispatch(msg, ctx, newSession);
     if(r.isNull()) { httpStatus = 202; return ""; }
     return r.dump();
 }
@@ -478,7 +521,37 @@ static std::string DemoScript(const std::string& lang) {
            "Report to the user in chat what was shown.";
 }
 
-JVal McpServer::Dispatch(const JVal& msg) {
+std::string McpServer::NewSessionId() {
+    static LONG counter = 0;
+    LARGE_INTEGER q;
+    QueryPerformanceCounter(&q);
+    DWORD a = GetTickCount() * 2654435761u ^ q.LowPart ^ (DWORD)InterlockedIncrement(&counter) * 40503u ^
+              GetCurrentThreadId() * 97u;
+    char buf[16];
+    sprintf(buf, "%08x", (unsigned)a);
+    return buf;
+}
+
+std::string McpServer::SessionLabel(const McpReqCtx& ctx) {
+    std::string label;
+    if(ctx.session.empty()) {
+        label = "- ";  // the client does not send Mcp-Session-Id
+    } else {
+        label = ctx.session;
+        EnterCriticalSection(&m_sesCs);
+        for(size_t i = 0; i < m_sessions.size(); i++)
+            if(m_sessions[i].id == ctx.session) {
+                label += " " + m_sessions[i].client + (m_sessions[i].version.empty() ? "" : "/" + m_sessions[i].version);
+                m_sessions[i].calls++;
+                break;
+            }
+        LeaveCriticalSection(&m_sesCs);
+        label += " ";
+    }
+    return label + ctx.ip;
+}
+
+JVal McpServer::Dispatch(const JVal& msg, const McpReqCtx& ctx, std::string* newSession) {
     if(!msg.isObj()) return RpcError(JVal(), -32600, "Invalid Request");
     if(!msg.has("id")) return JVal();      // notification (e.g. notifications/initialized)
     const JVal& id = msg.get("id");
@@ -490,6 +563,30 @@ JVal McpServer::Dispatch(const JVal& msg) {
     if(method == "initialize") {
         std::string pv = params.get("protocolVersion").asStr();
         if(pv != "2025-06-18" && pv != "2025-03-26" && pv != "2024-11-05") pv = "2025-06-18";
+        {
+            Session s;
+            s.id = NewSessionId();
+            s.client = McpShort(params.get("clientInfo").get("name").asStr(), 60);
+            s.version = McpShort(params.get("clientInfo").get("version").asStr(), 30);
+            if(s.client.empty()) s.client = "?";
+            s.protocol = pv;
+            s.ip = ctx.ip;
+            s.started = GetTickCount();
+            s.calls = 0;
+            EnterCriticalSection(&m_sesCs);
+            if(m_sessions.size() > 200) m_sessions.erase(m_sessions.begin());
+            m_sessions.push_back(s);
+            LeaveCriticalSection(&m_sesCs);
+            if(newSession) *newSession = s.id;
+            McpReqCtx sc;
+            sc.session = s.id;
+            sc.ip = ctx.ip;
+            Audit(SessionLabel(sc), "ПОДКЛЮЧЕНИЕ ИИ-клиента " + s.client + (s.version.empty() ? "" : " " + s.version) +
+                                        ", протокол MCP " + pv + ", адрес " + ctx.ip + ", сессия " + s.id);
+            Report(McpWord("connected", m_cfg.language) + ": " + s.client + (s.version.empty() ? "" : " " + s.version) +
+                       " (" + McpWord("session", m_cfg.language) + " " + s.id + ")",
+                   MCP_REP_INFO);
+        }
         result.set("protocolVersion", JVal::string(pv));
         JVal caps = JVal::object();
         JVal tools = JVal::object();
@@ -514,17 +611,37 @@ JVal McpServer::Dispatch(const JVal& msg) {
         // empty result
     } else if(method == "tools/list") {
         result.set("tools", ToolsList());
+        {
+            char n[48];
+            sprintf(n, " (%u)", (unsigned)result.get("tools").size());
+            Audit(SessionLabel(ctx), std::string("СПИСОК ИНСТРУМЕНТОВ: ИИ запросил список возможностей сервера") + n);
+            Report(McpWord("toolslist", m_cfg.language) + n, MCP_REP_INFO);
+        }
     } else if(method == "tools/call") {
         std::string name = params.get("name").asStr();
         JVal args = params.get("arguments");
         if(!args.isObj()) args = JVal::object();
         DWORD t0 = GetTickCount();
         bool isError = false, pending = false;
+        const std::string lbl = SessionLabel(ctx);
+        // what is going to happen: in the log (always Russian, with the exact parameters) and in the window
+        Audit(lbl, "ВЫЗОВ " + name + ": " + McpDescribeCall(name, args, "ru") + " | параметры: " +
+                       McpShort(args.dump(), 4000));
+        Report(McpDescribeCall(name, args, m_cfg.language), MCP_REP_CALL);
         JVal content = CallTool(name, args, isError, pending);
-        if(content.isNull()) return RpcError(id, -32602, "Unknown tool: " + name);
-        char buf[96];
-        sprintf(buf, " %lums %s", GetTickCount() - t0, isError ? "ERR" : pending ? "PENDING" : "ok");
-        Audit("CALL " + name + buf);
+        if(content.isNull()) {
+            Audit(lbl, "ИТОГ " + name + ": ошибка: неизвестный инструмент");
+            Report("  -> " + McpWord("error", m_cfg.language) + ": unknown tool " + name, MCP_REP_ERROR, true);
+            return RpcError(id, -32602, "Unknown tool: " + name);
+        }
+        {
+            unsigned ms = GetTickCount() - t0;
+            std::string rtext = content.size() ? content.at(0).get("text").asStr() : std::string();
+            McpResultInfo ru = McpDescribeResult(name, rtext, isError, pending, ms, "ru");
+            Audit(lbl, "ИТОГ " + name + ": " + ru.text);
+            McpResultInfo loc = McpDescribeResult(name, rtext, isError, pending, ms, m_cfg.language);
+            Report("  -> " + loc.text, loc.kind, true);
+        }
         result.set("content", content);
         result.set("isError", JVal::boolean(isError));
     } else if(method == "resources/list") {
@@ -544,6 +661,8 @@ JVal McpServer::Dispatch(const JVal& msg) {
         result.set("prompts", list);
     } else if(method == "prompts/get") {
         if(params.get("name").asStr() != "demo") return RpcError(id, -32602, "Unknown prompt");
+        Audit(SessionLabel(ctx), "СЦЕНАРИЙ ДЕМО: ИИ запросил сценарий демо-режима (prompt demo)");
+        Report(McpWord("demo", m_cfg.language), MCP_REP_INFO);
         std::string lang = params.get("arguments").get("language").asStr();
         if(lang != "ru" && lang != "en" && lang != "bg") lang = m_cfg.language.empty() ? "ru" : m_cfg.language;
         JVal msgs = JVal::array(), m = JVal::object(), content = JVal::object();
@@ -1171,7 +1290,6 @@ std::string McpServer::ToolDialogButton(const JVal& args, bool& isError) {
     }
     std::string btnText = WndText(btn), dlgText = WndText(dlg);  // read before the dialog closes
     PostMessageW(btn, BM_CLICK, 0, 0);
-    Audit("BUTTON " + btnText);
     return "нажата кнопка \"" + btnText + "\" в окне \"" + dlgText + "\"";
 }
 
@@ -1333,19 +1451,53 @@ void McpServer::ProcessQueue() {
     InterlockedExchange(&m_inQueue, 0);
 }
 
-void McpServer::Audit(const std::string& line) {
-    if(m_cfg.auditPath.empty()) return;
+// creates the missing folders of a path (the user may point the log into a new folder)
+static void MakeDirs(const std::string& file) {
+    for(size_t i = 3; i < file.size(); i++)
+        if(file[i] == '\\' || file[i] == '/') CreateDirectoryA(file.substr(0, i).c_str(), NULL);
+}
+
+void McpServer::Audit(const std::string& sess, const std::string& line) {
     SYSTEMTIME st;
     GetLocalTime(&st);
     char ts[64];
-    sprintf(ts, "%04d-%02d-%02d %02d:%02d:%02d ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    sprintf(ts, "%04d-%02d-%02d %02d:%02d:%02d | ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    std::string out = std::string(ts) + m_who + " | " + (sess.empty() ? std::string("-") : sess) + " | " + line + "\r\n";
     EnterCriticalSection(&m_auditCs);
-    FILE* f = fopen(m_cfg.auditPath.c_str(), "ab");
-    if(f) {
-        fputs(ts, f);
-        fputs(line.c_str(), f);
-        fputs("\r\n", f);
-        fclose(f);
+    if(!m_cfg.auditPath.empty()) {
+        FILE* f = fopen(m_cfg.auditPath.c_str(), "ab");
+        if(!f) {
+            MakeDirs(m_cfg.auditPath);
+            f = fopen(m_cfg.auditPath.c_str(), "ab");
+        }
+        if(f) {
+            if(_filelength(_fileno(f)) == 0) fwrite("\xEF\xBB\xBF", 1, 3, f);  // UTF-8 BOM for editors
+            fputs(out.c_str(), f);
+            fclose(f);
+        }
     }
     LeaveCriticalSection(&m_auditCs);
+}
+
+void McpServer::SetAuditPath(const std::string& path) {
+    EnterCriticalSection(&m_auditCs);
+    m_cfg.auditPath = path;
+    LeaveCriticalSection(&m_auditCs);
+    Audit(path.empty() ? "ЖУРНАЛ ВЫЗОВОВ выключен" : "ЖУРНАЛ ВЫЗОВОВ: файл журнала задан заново: " + Cp1251ToUtf8(path));
+}
+
+std::string McpServer::AuditPath() {
+    EnterCriticalSection(&m_auditCs);
+    std::string p = m_cfg.auditPath;
+    LeaveCriticalSection(&m_auditCs);
+    return p;
+}
+
+void McpServer::Report(const std::string& text, int kind, bool) {
+    if(!m_host) return;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char ts[24];
+    sprintf(ts, "%02d:%02d:%02d  ", st.wHour, st.wMinute, st.wSecond);
+    m_host->Report(std::string(ts) + text, kind);
 }

@@ -9,3 +9,5 @@ obj/
 1CTestBase/SYSLOG/
 1CTestBase/1SUSERS.DBF
 1CTestBase/*.LCK
+1CTestBase/pagelog/
+1CTestBase/codelog/

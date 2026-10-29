@@ -170,5 +170,42 @@ check(not err and isinstance(m, str) and m.startswith("Справочник.ТМ
 m, err = call("metadata")
 check(not err and isinstance(m, str) and "Справочник (1):" in m, "metadata: overview", m)
 
+# ---- call log (file) and the window of the server's actions, set from code
+import os
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGDIR = os.path.join(BASE, "1CTestBase", "codelog")
+LOG = os.path.join(LOGDIR, "mcp_code.log")
+if os.path.exists(LOG):
+    os.remove(LOG)
+code = ('О = СоздатьОбъект("MCPСервер");\n'
+        'Р = О.УстановитьФайлЖурнала("%s");\n'
+        'Результат = Строка(Р) + "|" + О.ФайлЖурнала();' % LOG)
+r, err = call("run_code", code=code)
+check(not err and r.get("result", {}).get("value", "").lower() == ("1|" + LOG).lower(),
+      "УстановитьФайлЖурнала + ФайлЖурнала: the path is set at once on the running server", r)
+call("status")
+call("press_button", form="Автотест", button="флДаты", say="журнал: нажатие")
+call("press_button", form="Автотест", button="флДаты")
+try:
+    txt = open(LOG, "rb").read().decode("utf-8-sig")
+except IOError:
+    txt = ""
+lines = txt.splitlines()
+check(txt.startswith("2") and all(l.count(" | ") >= 3 for l in lines if l), "log file: every line is time | user | session | text", lines[:2])
+check("ВЫЗОВ press_button: Нажимает кнопку «флДаты» на форме" in txt or "ВЫЗОВ press_button: Нажимает кнопку «флДаты» на активной форме" in txt,
+      "log: the call is described in words", lines[-4:])
+check('"button":"флДаты","say":"журнал: нажатие"}' in txt and "| параметры: {" in txt, "log: the exact parameters (with the note) are written", lines[-4:])
+check("ИТОГ press_button: готово" in txt and "нажата кнопка «флДаты»" in txt, "log: the result is described", lines[-4:])
+r, err = call("run_code", code='О = СоздатьОбъект("MCPСервер");\nР = О.УстановитьФайлЖурнала("");\nРезультат = Строка(Р) + "|" + О.ФайлЖурнала();')
+check(not err and r.get("result", {}).get("value", "").endswith(os.path.join("SYSLOG", "1cmcp.log")),
+      "an empty path returns the log to SYSLOG\\1cmcp.log", r)
+r, err = call("run_code", code='О = СоздатьОбъект("MCPСервер");\nР1 = О.ОкноДействий(1);\nР2 = О.ОкноДействий(-1);\nР3 = О.ОкноДействий(0);\nРезультат = Строка(Р1) + Строка(Р2) + Строка(Р3);')
+check(not err and r.get("result", {}).get("value") == "110", "ОкноДействий(1/-1/0): show, ask, hide", r)
+try:
+    import shutil
+    shutil.rmtree(LOGDIR)
+except OSError:
+    pass
+
 print("RESULT: %s (%d failed)" % ("OK" if not fails else "FAIL", fails))
 sys.exit(1 if fails else 0)

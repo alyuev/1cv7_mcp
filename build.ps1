@@ -46,17 +46,17 @@ Push-Location $proj
 $fail = 0
 # core: plain Win32, no MFC
 $coreFlags = @('/nologo','/c','/MD','/GX','/GR','/O2','/W3','/DWIN32','/DNDEBUG','/DWIN32_LEAN_AND_MEAN')
-$core = @('core\json.cpp','core\textconv.cpp','core\mcp_core.cpp')
+$core = @('core\json.cpp','core\textconv.cpp','core\mcp_log.cpp','core\mcp_core.cpp')
 foreach ($s in $core + @('test\selftest.cpp')) { $fail += Compile $s $coreFlags }
 if ($fail) { Pop-Location; Write-Host "Compile errors: $fail" -ForegroundColor Red; exit 1 }
-$coreObj = @('obj\json.obj','obj\textconv.obj','obj\mcp_core.obj')
+$coreObj = @('obj\json.obj','obj\textconv.obj','obj\mcp_log.obj','obj\mcp_core.obj')
 
 Link (@('/nologo','/subsystem:console','/OUT:build\selftest.exe','obj\selftest.obj') + $coreObj + @('kernel32.lib','user32.lib','ws2_32.lib')) 'selftest.exe'
 if ($SelfTest) { Pop-Location; Write-Host "BUILD OK (selftest)" -ForegroundColor Green; exit 0 }
 
 # component: MFC + 1C headers, flags mirror 1sqlite Release
 $vkFlags = @('/nologo','/c','/MD','/GX','/GR','/O2','/Zm200','/DWIN32','/DNDEBUG','/D_NDEBUG','/D_AFXEXT')
-foreach ($s in @('src\1cmcp.cpp','src\forms.cpp','src\ui.cpp','src\optpage.cpp','src\StdAfx.cpp')) { $fail += Compile $s $vkFlags }
+foreach ($s in @('src\1cmcp.cpp','src\forms.cpp','src\ui.cpp','src\msgwin.cpp','src\optpage.cpp','src\StdAfx.cpp')) { $fail += Compile $s $vkFlags }
 if ($fail) { Pop-Location; Write-Host "Compile errors: $fail" -ForegroundColor Red; exit 1 }
 
 # version + "\0sd" resources (1C 7.7 unloads a component DLL without them) + options page dialog
@@ -65,7 +65,7 @@ if ($LASTEXITCODE -ne 0) { $o | ForEach-Object { Write-Host $_ }; Pop-Location; 
 
 # link cwd = project dir so the relative lib pragmas in StdAfx.cpp resolve
 $syslibs = @('kernel32.lib','user32.lib','gdi32.lib','advapi32.lib','ole32.lib','oleaut32.lib','uuid.lib','comctl32.lib','version.lib','ws2_32.lib')
-Link (@('/nologo','/DLL','/subsystem:windows','/IGNORE:4089','/OUT:build\1cmcp.dll','obj\1cmcp.obj','obj\forms.obj','obj\ui.obj','obj\optpage.obj','obj\StdAfx.obj') + $coreObj + @('obj\1cmcp.res') + $syslibs) '1cmcp.dll'
+Link (@('/nologo','/DLL','/subsystem:windows','/IGNORE:4089','/OUT:build\1cmcp.dll','obj\1cmcp.obj','obj\forms.obj','obj\ui.obj','obj\msgwin.obj','obj\optpage.obj','obj\StdAfx.obj') + $coreObj + @('obj\1cmcp.res') + $syslibs) '1cmcp.dll'
 # syntax help next to the DLL: regenerate 1cmcp.als (version from core\mcp_version.h) and copy it to build\
 $py = Get-Command python -ErrorAction SilentlyContinue
 if ($py) { & $py.Source -I (Join-Path $proj 'docs\make_als.py') | Out-Null }

@@ -10,11 +10,19 @@
 static HANDLE g_wake;
 static HANDLE g_clientDone;
 static int g_fail = 0;
+static std::string g_session;   // Mcp-Session-Id given by initialize
+static std::string g_lastHead;  // response headers of the last request
 static const int PORT = 18777;
 
 class FakeHost : public McpHost {
   public:
     virtual void Wake() { SetEvent(g_wake); }
+    std::string reports;  // lines for the actions window: "kind|HH:MM:SS  text"
+    virtual void Report(const std::string& utf8, int kind) {
+        char k[8];
+        sprintf(k, "%d|", kind);
+        reports += k + utf8 + "\n";
+    }
     virtual bool RunTool(const std::string& tool, const JVal& args, std::string& text) {
         if(tool == "eval") { text = "value:" + args.get("expression").asStr(); return true; }
         if(tool == "run_code") {
@@ -56,6 +64,7 @@ static int Http(const char* method, const char* path, const std::string& body, c
     int status = atoi(all.c_str() + 9);
     size_t p = all.find("\r\n\r\n");
     resp = p == std::string::npos ? "" : all.substr(p + 4);
+    g_lastHead = p == std::string::npos ? all : all.substr(0, p);
     return status;
 }
 
@@ -65,7 +74,9 @@ static std::string Call(const char* tool, const char* args) {
     std::string body = std::string("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"") +
                        tool + "\",\"arguments\":" + args + "}}";
     std::string r;
-    Http("POST", "/mcp", body, AUTH, r);
+    std::string hdr = AUTH;
+    if(!g_session.empty()) hdr += "Mcp-Session-Id: " + g_session + "\r\n";
+    Http("POST", "/mcp", body, hdr.c_str(), r);
     return r;
 }
 
@@ -95,8 +106,13 @@ static unsigned __stdcall Client(void*) {
 
     st = Http("POST", "/mcp",
               "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\","
-              "\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}",
+              "\"capabilities\":{},\"clientInfo\":{\"name\":\"selftest-client\",\"version\":\"1.2\"}}}",
               AUTH, r);
+    {
+        size_t h = g_lastHead.find("Mcp-Session-Id: ");
+        if(h != std::string::npos) g_session = g_lastHead.substr(h + 16, g_lastHead.find("\r\n", h) - h - 16);
+        Check(g_session.size() == 8, "initialize hands out an Mcp-Session-Id", g_session);
+    }
     Check(st == 200 && r.find("\"protocolVersion\":\"2025-03-26\"") != std::string::npos && r.find("1cmcp") != std::string::npos,
           "initialize", r);
 
@@ -213,6 +229,10 @@ int main() {
     cfg.token = "selftest-token-0123456789";
     cfg.mlgPath = mlg;
     cfg.auditPath = std::string(tmp) + "1cmcp_selftest_audit.log";
+    cfg.userName = "tester";
+    cfg.computer = "SELFTEST";
+    cfg.pid = 4242;
+    cfg.language = "en";
     DeleteFileA(cfg.auditPath.c_str());
     // no anonymous mode and no weak tokens, not even on 127.0.0.1
     {
@@ -253,9 +273,54 @@ int main() {
         while((n = fread(buf, 1, sizeof(buf), f)) > 0) audit.append(buf, n);
         fclose(f);
     }
-    Check(audit.find("CALL run_code") != std::string::npos && audit.find("PENDING") != std::string::npos &&
-              audit.find("CALL get_task") != std::string::npos,
-          "audit marks unfinished task PENDING");
+    Check(audit.find("ВЫЗОВ run_code") != std::string::npos && audit.find("не завершено, задача №") != std::string::npos &&
+              audit.find("ВЫЗОВ get_task") != std::string::npos,
+          "audit marks an unfinished task as not finished");
+    // every line: time | user@computer #pid | session | text
+    Check(audit.compare(0, 3, "\xEF\xBB\xBF") == 0, "audit file starts with a UTF-8 BOM");
+    Check(audit.find(" | tester@SELFTEST #4242 | ") != std::string::npos, "audit lines carry the 1C user, computer and pid");
+    {
+        size_t at = audit.find("ПОДКЛЮЧЕНИЕ ИИ-клиента selftest-client 1.2");
+        Check(at != std::string::npos, "audit: the AI client connection is logged with its name and version");
+        size_t sid = audit.find("сессия ", at);
+        std::string id = sid == std::string::npos ? "" : audit.substr(sid + strlen("сессия "), 8);
+        Check(id.size() == 8 && audit.find(" | " + id + " selftest-client/1.2 127.0.0.1 | ВЫЗОВ ") != std::string::npos,
+              "audit: calls carry the MCP session id, client and address", id);
+    }
+    Check(audit.find("| параметры: {\"code\":\"SLEEP\"") != std::string::npos,
+          "audit: exact parameters of the call are logged");
+    Check(audit.find("Выполняет код 1С (5 симв.): SLEEP") != std::string::npos, "audit: the call is described in words");
+    Check(audit.find("ОТКЛОНЕНО: неверный или отсутствующий токен") != std::string::npos, "audit: a rejected request is logged");
+    // the actions window gets time first, then the description (in the configured language, here English)
+    Check(host.reports.find("1|") != std::string::npos && host.reports.find("Runs 1C code (5 chars): SLEEP") != std::string::npos,
+          "window report: the call description in English");
+    {
+        size_t p = host.reports.find("1|");
+        bool timeFirst = p != std::string::npos && host.reports.size() > p + 10 && host.reports[p + 4] == ':' &&
+                         host.reports[p + 7] == ':' && host.reports[p + 10] == ' ';
+        Check(timeFirst, "window report: a line starts with HH:MM:SS");
+    }
+    Check(host.reports.find("not finished, task #") != std::string::npos, "window report: the unfinished task is reported");
+    // changing the log file while running
+    {
+        std::string moved = std::string(tmp) + "1cmcp_selftest_moved\\audit2.log";
+        DeleteFileA(moved.c_str());
+        McpServer s3;
+        McpConfig c3 = cfg;
+        c3.port = PORT + 1;
+        c3.auditPath = cfg.auditPath;
+        std::string e3;
+        FakeHost h3;
+        bool ok3 = s3.Start(c3, &h3, e3);
+        s3.SetAuditPath(moved);
+        Check(ok3 && s3.AuditPath() == moved, "log path can be changed at runtime");
+        s3.Stop();
+        FILE* mf = fopen(moved.c_str(), "rb");
+        Check(mf != NULL, "the new log file (and its folder) were created");
+        if(mf) fclose(mf);
+        DeleteFileA(moved.c_str());
+        RemoveDirectoryA((std::string(tmp) + "1cmcp_selftest_moved").c_str());
+    }
     printf("RESULT: %s (%d failed)\n", g_fail ? "FAIL" : "OK", g_fail);
     return g_fail ? 1 : 0;
 }

@@ -140,6 +140,8 @@ class CMcpOptPage : public IPropertyPage {
         CheckDlgButton(m_hwnd, IDC_ALLOWCODE, s.allowCode ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(m_hwnd, IDC_AUTOSTART, s.autoStart ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(m_hwnd, IDC_HIGHLIGHT, s.highlight ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(m_hwnd, IDC_ACTIONWIN, s.actionWindow ? BST_CHECKED : BST_UNCHECKED);
+        SetDlgItemTextA(m_hwnd, IDC_LOGFILE, s.logFile);
         SetDlgItemTextA(m_hwnd, IDC_INIPATH, "Файл настроек: " + McpSettingsPath());
         SetDlgItemTextA(m_hwnd, IDC_VERSION, "Версия компоненты: 1cmcp " MCP_VERSION);
         m_filling = FALSE;
@@ -163,6 +165,11 @@ class CMcpOptPage : public IPropertyPage {
         s.allowCode = IsDlgButtonChecked(m_hwnd, IDC_ALLOWCODE) == BST_CHECKED;
         s.autoStart = IsDlgButtonChecked(m_hwnd, IDC_AUTOSTART) == BST_CHECKED;
         s.highlight = IsDlgButtonChecked(m_hwnd, IDC_HIGHLIGHT) == BST_CHECKED;
+        s.actionWindow = IsDlgButtonChecked(m_hwnd, IDC_ACTIONWIN) == BST_CHECKED;
+        GetDlgItemTextA(m_hwnd, IDC_LOGFILE, buf, sizeof(buf));
+        s.logFile = buf;
+        s.logFile.TrimLeft();
+        s.logFile.TrimRight();
     }
     void SetDirty() {
         if(m_filling) return;
@@ -231,7 +238,33 @@ class CMcpOptPage : public IPropertyPage {
             case IDC_ALLOWCODE:
             case IDC_AUTOSTART:
             case IDC_HIGHLIGHT:
+            case IDC_ACTIONWIN:
                 if(code == BN_CLICKED) SetDirty();
+                break;
+            case IDC_LOGFILE:
+                if(code == EN_CHANGE) SetDirty();
+                break;
+            case IDC_LOGBROWSE: {
+                char cur[512];
+                GetDlgItemTextA(m_hwnd, IDC_LOGFILE, cur, sizeof(cur));
+                McpSettings tmp;
+                tmp.logFile = cur;
+                CString shown = McpLogPath(tmp);
+                char file[512];
+                lstrcpynA(file, shown, sizeof(file));
+                OPENFILENAMEA ofn;
+                memset(&ofn, 0, sizeof(ofn));
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = m_hwnd;
+                ofn.lpstrFilter = "Журнал (*.log;*.txt)\0*.log;*.txt\0Все файлы\0*.*\0";
+                ofn.lpstrFile = file;
+                ofn.nMaxFile = sizeof(file);
+                ofn.lpstrDefExt = "log";
+                ofn.lpstrTitle = "Файл журнала вызовов MCP";
+                ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+                if(GetSaveFileNameA(&ofn)) SetDlgItemTextA(m_hwnd, IDC_LOGFILE, file);
+                break;
+            }
                 break;
             case IDC_GEN:
                 SetDlgItemTextA(m_hwnd, IDC_TOKEN, McpNewToken());

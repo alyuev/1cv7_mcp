@@ -11,8 +11,15 @@ struct McpSettings {
     BOOL autoStart;
     BOOL highlight;  // frame around the controls/forms the agent acts on
     CString language;  // ru / en / bg for the agent's notes on screen; empty = from Windows
+    CString logFile;   // call log file; empty = SYSLOG\1cmcp.log of the infobase; a folder = 1cmcp.log in it
+    BOOL actionWindow; // show what the server does in a separate message window
 };
 CString McpLanguage(const McpSettings& s);  // the effective one
+CString McpLogPath(const McpSettings& s);   // the effective call log file (relative = to the infobase folder)
+CString McpDefaultLogPath();
+BOOL McpServerSetLogPath(const CString& path, BOOL save);  // while running too; save = write to 1cmcp.ini
+void McpApplyActionWindow(BOOL on);  // show/hide the window of the server's actions
+BOOL McpActionWindowVisible();
 
 extern HINSTANCE g_hInstDll;
 

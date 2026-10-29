@@ -11,11 +11,15 @@
 #include "mcp_version.h"
 #include "forms.h"
 #include "ui.h"
+#include "msgwin.h"
 
 #ifndef HWND_MESSAGE
 #define HWND_MESSAGE ((HWND)-3)
 #endif
 #define WM_MCP_WAKE (WM_APP + 0x31)
+#define WM_MCP_REPORT (WM_APP + 0x32)
+
+static LONG g_actionWindow = 0;  // the server's actions go to their own message window
 
 HINSTANCE g_hInstDll = NULL;
 
@@ -180,9 +184,27 @@ static bool IdToInternal(const std::string& id, std::string& in) {
 
 class CMcpHost : public McpHost {
   public:
-    CMcpHost() : m_wnd(NULL), m_server(NULL) {}
+    CMcpHost() : m_wnd(NULL), m_server(NULL) { InitializeCriticalSection(&m_repCs); }
     HWND m_wnd;
     McpServer* m_server;
+
+    // lines for the actions window: queued from any thread, written by the main thread (WM_MCP_REPORT)
+    CRITICAL_SECTION m_repCs;
+    std::vector<std::pair<std::string, int> > m_rep;
+    virtual void Report(const std::string& utf8, int kind) {
+        if(!g_actionWindow || !m_wnd) return;
+        EnterCriticalSection(&m_repCs);
+        if(m_rep.size() < 1000) m_rep.push_back(std::make_pair(Utf8ToCp1251(utf8), kind));
+        LeaveCriticalSection(&m_repCs);
+        PostMessage(m_wnd, WM_MCP_REPORT, 0, 0);
+    }
+    void FlushReports() {
+        std::vector<std::pair<std::string, int> > local;
+        EnterCriticalSection(&m_repCs);
+        local.swap(m_rep);
+        LeaveCriticalSection(&m_repCs);
+        for(size_t i = 0; i < local.size(); i++) McpMsgWrite(CString(local[i].first.c_str()), local[i].second);
+    }
 
     virtual void Wake() {
         if(m_wnd) PostMessage(m_wnd, WM_MCP_WAKE, 0, 0);
@@ -622,6 +644,10 @@ static LRESULT CALLBACK MsgWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         if(g_server) g_server->ProcessQueue();
         return 0;
     }
+    if(msg == WM_MCP_REPORT) {
+        g_host.FlushReports();
+        return 0;
+    }
     return DefWindowProc(h, msg, wp, lp);
 }
 
@@ -715,6 +741,8 @@ void McpLoadSettings(McpSettings& s) {
     s.autoStart = FALSE;
     s.highlight = TRUE;
     s.language.Empty();
+    s.logFile.Empty();
+    s.actionWindow = FALSE;
     CString p = McpSettingsPath();
     if(p.IsEmpty()) return;
     char buf[512];
@@ -728,6 +756,9 @@ void McpLoadSettings(McpSettings& s) {
     s.highlight = GetPrivateProfileIntA("Server", "Highlight", 1, p) != 0;
     GetPrivateProfileStringA("Server", "Language", "", buf, sizeof(buf), p);
     s.language = buf;
+    GetPrivateProfileStringA("Server", "LogFile", "", buf, sizeof(buf), p);
+    s.logFile = buf;
+    s.actionWindow = GetPrivateProfileIntA("Server", "ActionWindow", 0, p) != 0;
     g_mcpHighlight = s.highlight != 0;  // what is in the file is what is shown
 }
 
@@ -743,7 +774,10 @@ BOOL McpSaveSettings(const McpSettings& s) {
            WritePrivateProfileStringA("Server", "AutoStart", s.autoStart ? "1" : "0", p) &&
            (g_mcpHighlight = s.highlight != 0, 1) &&
            WritePrivateProfileStringA("Server", "Highlight", s.highlight ? "1" : "0", p) &&
-           WritePrivateProfileStringA("Server", "Language", s.language.IsEmpty() ? NULL : (LPCSTR)s.language, p);
+           WritePrivateProfileStringA("Server", "Language", s.language.IsEmpty() ? NULL : (LPCSTR)s.language, p) &&
+           WritePrivateProfileStringA("Server", "LogFile", s.logFile.IsEmpty() ? NULL : (LPCSTR)s.logFile, p) &&
+           WritePrivateProfileStringA("Server", "ActionWindow", s.actionWindow ? "1" : "0", p) &&
+           (McpApplyActionWindow(s.actionWindow), 1);
 }
 
 // ru / en / bg: from the settings, else from the Windows UI language (Russian, Bulgarian, else English)
@@ -757,6 +791,51 @@ CString McpLanguage(const McpSettings& s) {
     if(PRIMARYLANGID(id) == LANG_RUSSIAN) return "ru";
     if(PRIMARYLANGID(id) == LANG_BULGARIAN) return "bg";
     return "en";
+}
+
+CString McpDefaultLogPath() {
+    CString dir = BaseDir();
+    return dir.IsEmpty() ? CString() : dir + "SYSLOG\\1cmcp.log";
+}
+
+// the file of the call log: empty = SYSLOG\1cmcp.log; relative = from the infobase folder; a folder = 1cmcp.log in it
+CString McpLogPath(const McpSettings& s) {
+    CString p = s.logFile;
+    p.TrimLeft();
+    p.TrimRight();
+    if(p.IsEmpty()) return McpDefaultLogPath();
+    BOOL absolute = (p.GetLength() > 1 && p[1] == ':') || p.Left(2) == "\\\\";
+    if(!absolute) p = BaseDir() + p;
+    DWORD a = GetFileAttributesA(p);
+    char last = p[p.GetLength() - 1];
+    if((a != 0xFFFFFFFF && (a & FILE_ATTRIBUTE_DIRECTORY)) || last == '\\' || last == '/') {
+        p.TrimRight("\\/");
+        p += "\\1cmcp.log";
+    }
+    return p;
+}
+
+void McpApplyActionWindow(BOOL on) {
+    InterlockedExchange(&g_actionWindow, on ? 1 : 0);
+    if(on) {
+        CString e;
+        if(!McpMsgOpen(e) && pBkEndUI) pBkEndUI->DoMessageLine("1cmcp: окно действий не открыто: " + e, mmExclamation);
+    } else
+        McpMsgShow(FALSE);
+}
+
+BOOL McpActionWindowVisible() { return McpMsgVisible(); }
+
+BOOL McpServerSetLogPath(const CString& path, BOOL save) {
+    McpSettings s;
+    McpLoadSettings(s);
+    s.logFile = path;
+    if(save && !McpSaveSettings(s)) return FALSE;
+    if(McpServerRunning() && g_server) {
+        g_server->SetAuditPath((LPCSTR)McpLogPath(s));
+        g_run.logFile = path;
+    }
+    return TRUE;
 }
 
 BOOL McpServerStart(const McpSettings& s, CString& err) {
@@ -777,12 +856,28 @@ BOOL McpServerStart(const McpSettings& s, CString& err) {
         return FALSE;
     }
     CString dir = BaseDir();
-    if(!dir.IsEmpty()) {
-        cfg.mlgPath = (LPCSTR)(dir + "SYSLOG\\1cv7.mlg");
-        cfg.auditPath = (LPCSTR)(dir + "SYSLOG\\1cmcp.log");
+    if(!dir.IsEmpty()) cfg.mlgPath = (LPCSTR)(dir + "SYSLOG\\1cv7.mlg");
+    cfg.auditPath = (LPCSTR)McpLogPath(s);
+    CString user = EvalString("ИмяПользователя()");
+    {
+        // a base without a user list has no 1C user name: the log then names the Windows user
+        CString shown = user;
+        if(shown.IsEmpty()) {
+            char wu[260] = "";
+            DWORD wl = sizeof(wu);
+            if(GetUserNameA(wu, &wl)) shown = CString(wu) + " (Windows)";
+        }
+        cfg.userName = Cp1251ToUtf8((LPCSTR)shown);
     }
-    CString info = "Каталог ИБ: " + dir + "; пользователь: " + EvalString("ИмяПользователя()") +
-                   "; конфигурация: " + EvalString("Метаданные.Синоним");
+    {
+        char cn[MAX_COMPUTERNAME_LENGTH + 2] = "";
+        DWORD cl = sizeof(cn);
+        GetComputerNameA(cn, &cl);
+        cfg.computer = Cp1251ToUtf8(cn);
+    }
+    cfg.pid = GetCurrentProcessId();
+    McpApplyActionWindow(s.actionWindow);  // before Start: its first lines go to the window
+    CString info = "Каталог ИБ: " + dir + "; пользователь: " + user + "; конфигурация: " + EvalString("Метаданные.Синоним");
     cfg.baseInfo = Cp1251ToUtf8((LPCSTR)info);
 
     if(!g_server) g_server = new McpServer();
@@ -909,6 +1004,48 @@ class CMcpServerObj : public CContextImpl<CMcpServerObj> {
     BL_FUNC(LastError, "ПоследняяОшибка", 0) {
         setStr(retVal, m_lastErr);
         return TRUE;
+    }
+    // ФайлЖурнала() - the file the call log is written to now (the running server's, else from 1cmcp.ini)
+    BL_FUNC(LogFile, "ФайлЖурнала", 0) {
+        std::string run = McpServerRunning() && g_server ? g_server->AuditPath() : std::string();
+        if(!run.empty() || McpServerRunning()) {
+            setStr(retVal, run.c_str());
+        } else {
+            McpSettings s;
+            McpLoadSettings(s);
+            setStr(retVal, McpLogPath(s));
+        }
+        return TRUE;
+    }
+    // УстановитьФайлЖурнала(Путь, Сохранить=0): file or folder (empty = the default SYSLOG\1cmcp.log);
+    // acts at once on a running server; Сохранить=1 also writes it to 1cmcp.ini
+    BL_FUNC_WITH_DEFVAL(SetLogFile, "УстановитьФайлЖурнала", 2) {
+        setNum(retVal, McpServerSetLogPath(ppParams[0]->GetString(), ppParams[1]->GetNumeric() != 0) ? 1 : 0);
+        return TRUE;
+    }
+    BL_DEFVAL_FOR(SetLogFile) {
+        if(!pValue) return nParam == 1;
+        if(nParam == 1) {
+            *pValue = 0L;
+            return TRUE;
+        }
+        return FALSE;
+    }
+    // ОкноДействий(Флаг=-1): 1 - show the window with the server's actions, 0 - hide, -1 - only ask.
+    // Returns 1 when the window is visible. A change here is not saved to 1cmcp.ini
+    BL_FUNC_WITH_DEFVAL(ActionWindow, "ОкноДействий", 1) {
+        long f = (long)ppParams[0]->GetNumeric();
+        if(f >= 0) McpApplyActionWindow(f != 0);
+        setNum(retVal, McpActionWindowVisible() ? 1 : 0);
+        return TRUE;
+    }
+    BL_DEFVAL_FOR(ActionWindow) {
+        if(!pValue) return nParam == 0;
+        if(nParam == 0) {
+            *pValue = -1L;
+            return TRUE;
+        }
+        return FALSE;
     }
     BL_FUNC(Version, "Версия", 0) {
         setStr(retVal, MCP_VERSION);

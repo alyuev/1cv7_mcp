@@ -632,6 +632,15 @@ void McpFlashRestart(int id) {
 
 static bool HlColor(const McpForm& f, const McpCtrl& m, COLORREF col, int ms) {
     if(!m.ctl || !m.wnd) return false;
+    // the control is already coloured by an earlier call: its saved colour is the original one -
+    // a second item would save the yellow as "old" and bring it back at the end
+    for(size_t i = 0; i < g_hl.size(); i++) {
+        if(g_hl[i].ctl == m.ctl && g_hl[i].wnd == m.wnd) {
+            g_hl[i].start = GetTickCount();
+            g_hl[i].ms = ms < 400 ? 400 : ms;
+            return true;
+        }
+    }
     HlItem it;
     memset(&it, 0, sizeof(it));
     it.target = m.wnd;

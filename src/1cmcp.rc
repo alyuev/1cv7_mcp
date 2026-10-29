@@ -37,11 +37,11 @@ END
 LANGUAGE LANG_RUSSIAN, SUBLANG_DEFAULT
 #pragma code_page(1251)
 
-IDD_MCP_PAGE DIALOG DISCARDABLE  0, 0, 262, 248
+IDD_MCP_PAGE DIALOG DISCARDABLE  0, 0, 262, 270
 STYLE DS_CONTROL | DS_3DLOOK | WS_CHILD
 FONT 8, "MS Sans Serif"
 BEGIN
-    GROUPBOX        "Сервер MCP для ИИ-агентов",-1,4,2,254,124
+    GROUPBOX        "Сервер MCP для ИИ-агентов",-1,4,2,254,150
     LTEXT           "Порт:",-1,10,17,24,8
     EDITTEXT        IDC_PORT,36,15,36,12,ES_AUTOHSCROLL | ES_NUMBER
     LTEXT           "Адрес:",-1,82,17,26,8
@@ -56,14 +56,19 @@ BEGIN
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,80,240,10
     CONTROL         "Подсвечивать действия ИИ на формах (рамка вокруг элемента)",IDC_HIGHLIGHT,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,93,240,10
-    LTEXT           "Адрес 127.0.0.1 - только эта машина. Токен обязателен всегда (не короче 16 символов).",
-                    -1,10,106,240,16
-    GROUPBOX        "Состояние",-1,4,130,254,88
-    LTEXT           "",IDC_STATUS,10,142,240,48
-    PUSHBUTTON      "Запустить",IDC_STARTSTOP,10,196,62,14
-    PUSHBUTTON      "Копировать команду для Claude Code",IDC_COPYCMD,78,196,136,14
-    LTEXT           "",IDC_INIPATH,6,222,252,12
-    LTEXT           "",IDC_VERSION,6,234,252,10
+    CONTROL         "Показывать действия ИИ в отдельном окне сообщений",IDC_ACTIONWIN,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,106,240,10
+    LTEXT           "Журнал:",IDC_LOGLABEL,10,122,28,8
+    EDITTEXT        IDC_LOGFILE,40,120,192,12,ES_AUTOHSCROLL
+    PUSHBUTTON      "...",IDC_LOGBROWSE,234,119,16,14
+    LTEXT           "Файл журнала вызовов (пользователь, сеанс, параметры). Пусто - SYSLOG\\1cmcp.log базы; можно папку.",
+                    -1,10,135,240,16
+    GROUPBOX        "Состояние",-1,4,156,254,76
+    LTEXT           "",IDC_STATUS,10,167,240,40
+    PUSHBUTTON      "Запустить",IDC_STARTSTOP,10,212,62,14
+    PUSHBUTTON      "Копировать команду для Claude Code",IDC_COPYCMD,78,212,136,14
+    LTEXT           "",IDC_INIPATH,6,238,252,12
+    LTEXT           "",IDC_VERSION,6,251,252,10
 END
 
 // code of the MCP tool "metadata" (1C 7.7 module text, CP1251)
