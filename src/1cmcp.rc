@@ -63,12 +63,11 @@ BEGIN
     PUSHBUTTON      "...",IDC_LOGBROWSE,234,119,16,14
     LTEXT           "Файл журнала вызовов (пользователь, сеанс, параметры). Пусто - SYSLOG\\1cmcp.log базы; можно папку.",
                     -1,10,135,240,16
-    GROUPBOX        "Состояние",-1,4,156,254,76
+    GROUPBOX        "Состояние",IDC_VERSION,4,156,254,76
     LTEXT           "",IDC_STATUS,10,167,240,40
     PUSHBUTTON      "Запустить",IDC_STARTSTOP,10,212,62,14
     PUSHBUTTON      "Копировать команду для Claude Code",IDC_COPYCMD,78,212,136,14
-    LTEXT           "",IDC_INIPATH,6,238,252,12
-    LTEXT           "",IDC_VERSION,6,251,252,10
+    LTEXT           "",IDC_INIPATH,6,236,252,30
 END
 
 // code of the MCP tool "metadata" (1C 7.7 module text, CP1251)
