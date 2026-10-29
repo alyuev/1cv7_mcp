@@ -56,7 +56,7 @@ if ($SelfTest) { Pop-Location; Write-Host "BUILD OK (selftest)" -ForegroundColor
 
 # component: MFC + 1C headers, flags mirror 1sqlite Release
 $vkFlags = @('/nologo','/c','/MD','/GX','/GR','/O2','/Zm200','/DWIN32','/DNDEBUG','/D_NDEBUG','/D_AFXEXT')
-foreach ($s in @('src\1cmcp.cpp','src\forms.cpp','src\optpage.cpp','src\StdAfx.cpp')) { $fail += Compile $s $vkFlags }
+foreach ($s in @('src\1cmcp.cpp','src\forms.cpp','src\ui.cpp','src\optpage.cpp','src\StdAfx.cpp')) { $fail += Compile $s $vkFlags }
 if ($fail) { Pop-Location; Write-Host "Compile errors: $fail" -ForegroundColor Red; exit 1 }
 
 # version + "\0sd" resources (1C 7.7 unloads a component DLL without them) + options page dialog
@@ -65,6 +65,6 @@ if ($LASTEXITCODE -ne 0) { $o | ForEach-Object { Write-Host $_ }; Pop-Location; 
 
 # link cwd = project dir so the relative lib pragmas in StdAfx.cpp resolve
 $syslibs = @('kernel32.lib','user32.lib','gdi32.lib','advapi32.lib','ole32.lib','oleaut32.lib','uuid.lib','comctl32.lib','version.lib','ws2_32.lib')
-Link (@('/nologo','/DLL','/subsystem:windows','/IGNORE:4089','/OUT:build\1cmcp.dll','obj\1cmcp.obj','obj\forms.obj','obj\optpage.obj','obj\StdAfx.obj') + $coreObj + @('obj\1cmcp.res') + $syslibs) '1cmcp.dll'
+Link (@('/nologo','/DLL','/subsystem:windows','/IGNORE:4089','/OUT:build\1cmcp.dll','obj\1cmcp.obj','obj\forms.obj','obj\ui.obj','obj\optpage.obj','obj\StdAfx.obj') + $coreObj + @('obj\1cmcp.res') + $syslibs) '1cmcp.dll'
 Pop-Location
 Write-Host "BUILD OK -> $out" -ForegroundColor Green

@@ -634,6 +634,19 @@ JVal McpServer::ToolsList() {
                        p, "name", false));
 
         p = JVal::object();
+        p.set("form", Prop("string", "Форма: номер из forms, hwnd или часть заголовка. По умолчанию активная."));
+        p.set("field", Prop("string", "Реквизит формы: идентификатор, надпись или id из form_controls."));
+        p.set("value", Prop("string", "Новое значение: строка или число."));
+        p.set("expression", Prop("string", "Или выражение 1С (вместо value): Дата(2026,1,31), "
+                                           "Справочник.Валюты.НайтиПоКоду(\"USD\")..."));
+        AddWaitProps(p);
+        list.push(Tool("set_value", "Записать значение в реквизит формы",
+                       "Присваивает реквизиту открытой формы значение (как код модуля формы) и подсвечивает поле, "
+                       "чтобы пользователь видел, что изменилось. Возвращает прежнее значение (old). Формула "
+                       "поля при этом не выполняется - как при присваивании из кода.",
+                       p, "field", false));
+
+        p = JVal::object();
         p.set("id", Prop("string", "ИД объекта: O/<вид>/<код> - документ, B/<вид>/<код> - элемент справочника; "
                                    "код базы УРБД в скобках: O/1102/(ACC)8439502. Такой ИД даёт object_id."));
         p.set("open", Prop("boolean", "Открыть форму объекта (по умолчанию true); false - только найти."));
@@ -702,12 +715,35 @@ JVal McpServer::ToolsList() {
                                  "остальное - анимированная рамка. frame - только рамка; color - то же, что по "
                                  "умолчанию (цвет виден только у полей ввода)."));
     p.set("seconds", Prop("number", "Сколько секунд держать подсветку (по умолчанию 2, максимум 30)."));
+    p.set("command", Prop("number", "Обвести кнопки панелей инструментов с этой командой (код из ui_find)."));
+    p.set("toolbar", Prop("string", "Обвести панель инструментов целиком (часть названия: Стандартная, Сервис)."));
     AddWaitProps(p);
     list.push(Tool("highlight", "Показать элемент",
                    "Подсвечивает элемент формы или всю форму, чтобы показать пользователю, о чём речь "
                    "(\"вот это поле\"). Действия агента подсвечиваются и сами: press_button - красная рамка "
                    "вокруг кнопки, run_code с form, call_form_procedure, read_table, open_object - синяя рамка "
                    "вокруг формы.",
+                   p, NULL, true));
+
+    p = JVal::object();
+    p.set("text", Prop("string", "Что искать: часть названия пункта меню или подсказки кнопки (Продажи, Табло)."));
+    AddWaitProps(p);
+    list.push(Tool("ui_find", "Найти в интерфейсе",
+                   "Ищет команду в главном меню 1С (полный путь, код команды, доступность) и на панелях "
+                   "инструментов (какая панель, координаты, подсказка кнопки). Для подсказок пользователю "
+                   "\"где это в программе\": затем highlight с command (кнопка на панели) или show_menu "
+                   "(раскрыть меню до пункта).",
+                   p, "text", true));
+
+    p = JVal::object();
+    p.set("command", Prop("number", "Код команды из ui_find."));
+    p.set("path", Prop("string", "Или путь пункта меню: \"Сервис > Табло\" (можно часть)."));
+    p.set("seconds", Prop("number", "Сколько секунд держать меню открытым (по умолчанию 5)."));
+    AddWaitProps(p);
+    list.push(Tool("show_menu", "Показать пункт меню",
+                   "Раскрывает главное меню 1С до пункта (как пользователь стрелками с клавиатуры), обводит "
+                   "пункт рамкой и через seconds закрывает меню. Сам пункт не выбирает. Отвечает сразу, "
+                   "меню раскрывается следом за ответом.",
                    p, NULL, true));
 
     p = JVal::object();
@@ -768,12 +804,13 @@ JVal McpServer::CallTool(const std::string& name, const JVal& args, bool& isErro
         if(!m_cfg.allowCode) { isError = true; text = "выполнение кода запрещено в настройках компоненты"; }
         else text = Run1C(name, args, isError, pending);
     } else if(name == "press_button" || name == "system_command" || name == "call_form_procedure" ||
-              name == "open_object") {
+              name == "open_object" || name == "set_value") {
         // a button formula or a command can do anything a user can: same switch as code
         if(!m_cfg.allowCode) { isError = true; text = "нажатие кнопок и команды запрещены в настройках компоненты"; }
         else text = Run1C(name, args, isError, pending);
     } else if(name == "read_messages" || name == "clear_messages" || name == "forms" || name == "form_controls" ||
-              name == "metadata" || name == "read_table" || name == "object_id" || name == "highlight")
+              name == "metadata" || name == "read_table" || name == "object_id" || name == "highlight" ||
+              name == "ui_find" || name == "show_menu")
         text = Run1C(name, args, isError, pending);
     else
         return JVal();

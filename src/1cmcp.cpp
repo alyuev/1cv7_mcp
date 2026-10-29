@@ -10,6 +10,7 @@
 #include "mcp_page.h"
 #include "mcp_version.h"
 #include "forms.h"
+#include "ui.h"
 
 #ifndef HWND_MESSAGE
 #define HWND_MESSAGE ((HWND)-3)
@@ -207,7 +208,77 @@ class CMcpHost : public McpHost {
             return RunModule(Utf8ToCp1251(args.get("code").asStr()), 0, text, ctx, fm);
         }
         if(tool == "metadata") return Metadata(args, text);
+        if(tool == "ui_find") {
+            text = McpUiFind(args.get("text").asStr()).dump();
+            return true;
+        }
+        if(tool == "show_menu") {
+            JVal r = JVal::object();
+            std::string err;
+            double sec = args.get("seconds").asNum(5);
+            const JVal& cmd = args.get("command");
+            UINT id = (UINT)(cmd.isNum() ? cmd.asNum() : atol(cmd.asStr().c_str()));
+            bool ok = McpShowMenu(id, args.get("path").asStr(), (int)(sec * 1000), r, err);
+            if(!ok) r.set("error", JVal::string(err));
+            text = r.dump();
+            return ok;
+        }
+        if(tool == "set_value") {
+            McpForm f;
+            std::string err, name, cls;
+            if(!McpFindForm(args, f, err)) {
+                text = Error(err);
+                return false;
+            }
+            std::string field = args.get("field").asStr();
+            if(!McpFindField(f, field, name, cls)) {
+                text = Error(Cp1251ToUtf8("на форме нет реквизита \"") + field + Cp1251ToUtf8("\" (см. form_controls)"));
+                return false;
+            }
+            std::string expr = Utf8ToCp1251(args.get("expression").asStr());
+            if(expr.empty()) {
+                const JVal& v = args.get("value");
+                expr = v.isNum() ? NumStr(v.asNum()) : Lit(Utf8ToCp1251(v.asStr()));
+                if(v.isNum() && v.asNum() != (long)v.asNum()) {
+                    char buf[64];
+                    sprintf(buf, "%.10g", v.asNum());
+                    expr = buf;
+                }
+            }
+            std::string json;
+            bool ok = RunModule("Результат = " + name + ";\r\n" + name + " = " + expr + ";\r\n", 0, json,
+                                McpFormContext(f), McpFormModule(f));
+            JVal r, rr;
+            std::string e2;
+            r = JVal::object();
+            r.set("form", McpFormJson(f));
+            r.set("field", JVal::string(Cp1251ToUtf8(name)));
+            if(JVal::parse(json, rr, e2)) {
+                if(rr.has("result")) r.set("old", rr.get("result"));
+                if(rr.has("error")) r.set("error", rr.get("error"));
+                if(rr.has("messages")) r.set("messages", rr.get("messages"));
+            }
+            if(ok) {
+                JVal hi = JVal::object();
+                bool saved = g_mcpHighlight;
+                if(saved) McpHighlight(f, name, "", 2500, hi, e2);  // the field: colour + frame
+                g_mcpHighlight = saved;
+            }
+            text = r.dump();
+            return ok;
+        }
         if(tool == "highlight") {
+            const JVal& cmd = args.get("command");
+            UINT cmdId = (UINT)(cmd.isNum() ? cmd.asNum() : atol(cmd.asStr().c_str()));
+            if(cmdId || !args.get("toolbar").asStr().empty()) {
+                JVal r2 = JVal::object();
+                std::string e3;
+                double s2 = args.get("seconds").asNum(3);
+                bool ok2 = McpUiHighlight(cmdId, args.get("toolbar").asStr(), (int)(s2 * 1000), r2, e3);
+                if(!ok2) r2.set("error", JVal::string(e3));
+                text = r2.dump();
+                return ok2;
+            }
             McpForm f;
             std::string err;
             JVal r = JVal::object();

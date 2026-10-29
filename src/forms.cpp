@@ -348,6 +348,10 @@ struct HlItem {
     unsigned long oldBk;
     DWORD oldData0;
     bool data0;
+    bool hasRel;       // rel: rectangle in the target's client coordinates (a toolbar button)
+    RECT rel;
+    bool hasAbs;       // abs: screen rectangle without a window (a menu item), drawn topmost
+    RECT abs;
 };
 static std::vector<HlItem> g_hl;
 static UINT g_hlTimer = 0;
@@ -407,10 +411,10 @@ static void HlUndo(HlItem& it) {
 // one frame of the animation; false = finished
 static bool HlStep(HlItem& it, DWORD now) {
     int t = (int)(now - it.start);
-    if(t >= it.ms || !it.target || !IsWindow(it.target)) return false;
+    if(t >= it.ms || (!it.hasAbs && (!it.target || !IsWindow(it.target)))) return false;
     if(!it.strips[0]) return true;  // colour only
     const HlStyle& st = kStyles[it.style];
-    if(!IsWindowVisible(it.target)) {
+    if(!it.hasAbs && !IsWindowVisible(it.target)) {
         for(int i = 0; i < 4; i++) ShowWindow(it.strips[i], SW_HIDE);
         return true;
     }
@@ -424,7 +428,15 @@ static bool HlStep(HlItem& it, DWORD now) {
     int left = it.ms - t;
     BYTE alpha = (BYTE)(left < 300 ? 255 * left / 300 : 255);
     RECT r;
-    GetWindowRect(it.target, &r);
+    if(it.hasAbs)
+        r = it.abs;
+    else if(it.hasRel) {
+        POINT o = {0, 0};
+        ClientToScreen(it.target, &o);
+        r = it.rel;
+        OffsetRect(&r, o.x, o.y);
+    } else
+        GetWindowRect(it.target, &r);
     int d = st.thick + 1 + grow;
     InflateRect(&r, d, d);
     int w = r.right - r.left, h = r.bottom - r.top, th = st.thick;
@@ -434,7 +446,7 @@ static bool HlStep(HlItem& it, DWORD now) {
         HWND s = it.strips[i];
         SetWindowLong(s, GWL_USERDATA, (LONG)col);
         if(LayeredFn()) LayeredFn()(s, 0, alpha, LWA_ALPHA);
-        SetWindowPos(s, HWND_TOP, pos[i][0], pos[i][1], pos[i][2], pos[i][3],
+        SetWindowPos(s, it.hasAbs ? HWND_TOPMOST : HWND_TOP, pos[i][0], pos[i][1], pos[i][2], pos[i][3],
                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
         InvalidateRect(s, NULL, TRUE);
         UpdateWindow(s);
@@ -477,6 +489,32 @@ int McpFlash(HWND target, int style, int ms) {
     it.target = target;
     it.style = style;
     for(int i = 0; i < 4; i++) it.strips[i] = Strip(owner);
+    return HlAdd(it, ms);
+}
+
+// a rectangle inside a window (client coordinates) - follows the window
+int McpFlashRect(HWND target, const RECT& rel, int style, int ms) {
+    if(!g_mcpHighlight || !target || !IsWindow(target) || !IsWindowVisible(target)) return 0;
+    CMDIFrameWnd* mf = GetMainFrame();
+    HlItem it;
+    memset(&it, 0, sizeof(it));
+    it.target = target;
+    it.style = style;
+    it.hasRel = true;
+    it.rel = rel;
+    for(int i = 0; i < 4; i++) it.strips[i] = Strip(mf ? mf->m_hWnd : NULL);
+    return HlAdd(it, ms);
+}
+
+// a screen rectangle, above everything (an open menu is a topmost popup)
+int McpFlashScreen(const RECT& abs, int style, int ms) {
+    if(!g_mcpHighlight) return 0;
+    HlItem it;
+    memset(&it, 0, sizeof(it));
+    it.style = style;
+    it.hasAbs = true;
+    it.abs = abs;
+    for(int i = 0; i < 4; i++) it.strips[i] = Strip(NULL);
     return HlAdd(it, ms);
 }
 
@@ -558,6 +596,17 @@ bool McpHighlight(const McpForm& f, const std::string& control, const std::strin
         info.set("mode", JVal::string("frame"));
     }
     g_mcpHighlight = saved;
+    return true;
+}
+
+// a form control by identifier/title/id: its identifier (for code) and window class
+bool McpFindField(const McpForm& f, const std::string& name, std::string& codeName, std::string& cls) {
+    std::vector<McpCtrl> v;
+    Controls(f, v);
+    const McpCtrl* hit = FindControl(v, name);
+    if(!hit || hit->name.IsEmpty()) return false;
+    codeName = (LPCSTR)hit->name;
+    cls = (LPCSTR)hit->cls;
     return true;
 }
 

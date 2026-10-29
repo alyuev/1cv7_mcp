@@ -136,6 +136,24 @@ check(err and "не найден" in o.get("error", ""), "open_object: unknown o
 o, err = call("open_object", id="X/1/2")
 check(err and "O/" in o.get("error", ""), "open_object: bad ID format", o)
 
+u, err = call("ui_find", text="табло")
+tablo = [x for x in u.get("menu", []) if x.get("path") == "Сервис > Табло"] if isinstance(u, dict) else []
+check(not err and tablo and tablo[0]["command"] == 32865 and tablo[0].get("toolbar_buttons", [{}])[0].get("toolbar") == "Сервис",
+      "ui_find: Сервис > Табло (32865) and its button on the Сервис toolbar", u)
+h, err = call("highlight", command=32865, seconds=1)
+check(not err and h.get("shown"), "highlight command: the toolbar button", h)
+h, err = call("highlight", toolbar="Стандартная", seconds=1)
+check(not err and h.get("shown"), "highlight toolbar: a whole toolbar", h)
+mres, err = call("show_menu", path="Сервис > Табло", seconds=1.5)
+check(not err and mres.get("command") == 32865, "show_menu by path", mres)
+time.sleep(4)
+st, _ = call("status")
+check(isinstance(st, dict) and not st.get("modal"), "the menu closed itself", st)
+sv, err = call("set_value", form="Автотест", field="ИмяВК", value="значение от MCP")
+r, _ = call("run_code", form="Автотест", code="Результат = СокрЛП(ИмяВК);")
+check(not err and r.get("result", {}).get("value") == "значение от MCP", "set_value writes the form attribute", [sv, r])
+call("set_value", form="Автотест", field="ИмяВК", expression='""')
+
 m, err = call("metadata", kind="справочник", name="тмц")
 check(not err and isinstance(m, str) and m.startswith("Справочник.ТМЦ") and "ДатаСоздания" in m and "Дата" in m,
       "metadata: справочник ТМЦ with its attribute (kind/name case-insensitive)", m)
