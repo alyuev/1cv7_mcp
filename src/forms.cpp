@@ -495,6 +495,32 @@ static void HlUndo(HlItem& it) {
     }
 }
 
+// A child window can be "visible" (WS_VISIBLE) and still lie outside the form: a control placed beyond the
+// form's size. The visible part is the rectangle cut by the client areas of ALL its ancestors up to the
+// main frame; the target counts as shown only when it fits in it entirely.
+static bool FitsInAncestors(HWND start, const RECT& r) {
+    RECT vis = r;
+    HWND mainFrame = GetMainFrame() ? GetMainFrame()->m_hWnd : NULL;
+    for(HWND w = start; w; w = GetParent(w)) {
+        RECT cl;
+        GetClientRect(w, &cl);
+        POINT o = {0, 0};
+        ClientToScreen(w, &o);
+        OffsetRect(&cl, o.x, o.y);
+        if(!IntersectRect(&vis, &vis, &cl)) return false;
+        if(w == mainFrame) break;
+    }
+    return vis.left <= r.left + 2 && vis.top <= r.top + 2 && vis.right >= r.right - 2 && vis.bottom >= r.bottom - 2;
+}
+
+// is a control of a form really in view
+bool McpInView(HWND wnd) {
+    if(!wnd || !IsWindow(wnd) || !IsWindowVisible(wnd)) return false;
+    RECT r;
+    GetWindowRect(wnd, &r);
+    return FitsInAncestors(GetParent(wnd), r);
+}
+
 // one frame of the animation; false = finished
 static bool HlStep(HlItem& it, DWORD now) {
     int t = (int)(now - it.start);
@@ -503,6 +529,7 @@ static bool HlStep(HlItem& it, DWORD now) {
     const HlStyle& st = kStyles[it.style];
     if(!it.hasAbs && !IsWindowVisible(it.target)) {
         for(int i = 0; i < 4; i++) ShowWindow(it.strips[i], SW_HIDE);
+        if(it.tip) ShowWindow(it.tip, SW_HIDE);
         return true;
     }
     // close in: 12 px wider at the start, on the target after 200 ms (ease-out)
@@ -524,6 +551,12 @@ static bool HlStep(HlItem& it, DWORD now) {
         OffsetRect(&r, o.x, o.y);
     } else
         GetWindowRect(it.target, &r);
+    if(!it.hasAbs && !FitsInAncestors(it.hasRel ? it.target : GetParent(it.target), r)) {
+        // outside the visible part of the form: neither frame nor note (it would float over other windows)
+        for(int i = 0; i < 4; i++) ShowWindow(it.strips[i], SW_HIDE);
+        if(it.tip) ShowWindow(it.tip, SW_HIDE);
+        return true;
+    }
     int d = st.thick + 1 + grow;
     InflateRect(&r, d, d);
     int w = r.right - r.left, h = r.bottom - r.top, th = st.thick;
@@ -701,6 +734,11 @@ bool McpHighlight(const McpForm& f, const std::string& control, const std::strin
     }
     info.set("id", JVal::number(hit->id));
     info.set("class", JVal::string(U(hit->cls)));
+    if(!McpInView(hit->wnd)) {
+        g_mcpHighlight = saved;
+        err = Cp1251ToUtf8("элемент находится за пределами видимой части формы (или скрыт) - подсветка не показана");
+        return false;
+    }
     // input fields (1CEDIT): FormEx-style fill + frame, unless mode=frame; the colour is not visible on a
     // standard Button/checkbox (and its private data must not be written) - those get the frame only
     bool field = hit->cls == "1CEDIT";

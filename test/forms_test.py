@@ -170,6 +170,27 @@ check(not err and isinstance(m, str) and m.startswith("Справочник.ТМ
 m, err = call("metadata")
 check(not err and isinstance(m, str) and "Справочник (1):" in m, "metadata: overview", m)
 
+# ---- a control outside the visible part of the form must not be highlighted (frame/note would float over other windows)
+import ctypes
+from ctypes import wintypes
+u32 = ctypes.windll.user32
+fm, _ = call("forms")
+hf = [int(x["hwnd"], 16) for x in fm["forms"] if "Автотест" in x["title"]][0]
+rc = wintypes.RECT()
+u32.GetWindowRect(hf, ctypes.byref(rc))
+w0, h0 = rc.right - rc.left, rc.bottom - rc.top
+par = u32.GetParent(hf)
+pt = wintypes.POINT(rc.left, rc.top)
+u32.ScreenToClient(par, ctypes.byref(pt))
+check(not call("highlight", form="Автотест", control="С&формировать", seconds=1)[1], "highlight: a control in view is shown")
+u32.SetWindowPos(hf, 0, pt.x, pt.y, w0, h0 // 3, 0x0004 | 0x0010)  # SWP_NOZORDER | SWP_NOACTIVATE: the bottom buttons fall out
+time.sleep(0.5)
+h, err = call("highlight", form="Автотест", control="С&формировать", seconds=1)
+check(err and "за пределами" in h.get("error", ""), "highlight: a control outside the form is not shown", h)
+u32.SetWindowPos(hf, 0, pt.x, pt.y, w0, h0, 0x0004 | 0x0010)
+time.sleep(0.5)
+check(not call("highlight", form="Автотест", control="С&формировать", seconds=1)[1], "highlight: shown again when the form is big enough")
+
 # ---- call log (file) and the window of the server's actions, set from code
 import os
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

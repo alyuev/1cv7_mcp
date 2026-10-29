@@ -44,6 +44,7 @@ bool McpCallFormProc(const McpForm& f, const std::string& name, const JVal& args
 extern bool g_mcpHighlight;  // setting: highlight agent actions
 enum { MCP_HL_ACTION = 0, MCP_HL_FORM = 1, MCP_HL_FIELD = 2 };  // orange-red / blue / yellow-orange
 // animated frame around a window (no-op when the setting is off); returns an id for McpFlashRestart
+bool McpInView(HWND wnd);  // visible and entirely inside every ancestor's client area
 int McpFlash(HWND target, int style, int ms);
 void McpFlashRestart(int id);  // start the pulse/fade again (after a long action)
 // the agent's words (UTF-8) shown in a callout next to the NEXT highlight (frame) - the "say" argument
