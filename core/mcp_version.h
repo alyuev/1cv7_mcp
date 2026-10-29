@@ -4,8 +4,8 @@
 #ifndef MCP_VERSION_H
 #define MCP_VERSION_H
 
-#define MCP_VERSION "0.6.0"
-#define MCP_VERSION_FULL "0.6.0.1"
-#define MCP_VERSION_RC 0, 6, 0, 1
+#define MCP_VERSION "0.7.0"
+#define MCP_VERSION_FULL "0.7.0.1"
+#define MCP_VERSION_RC 0, 7, 0, 1
 
 #endif

@@ -10,7 +10,9 @@ struct McpSettings {
     BOOL allowCode;
     BOOL autoStart;
     BOOL highlight;  // frame around the controls/forms the agent acts on
+    CString language;  // ru / en / bg for the agent's notes on screen; empty = from Windows
 };
+CString McpLanguage(const McpSettings& s);  // the effective one
 
 extern HINSTANCE g_hInstDll;
 

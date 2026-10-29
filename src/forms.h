@@ -46,6 +46,9 @@ enum { MCP_HL_ACTION = 0, MCP_HL_FORM = 1, MCP_HL_FIELD = 2 };  // orange-red / 
 // animated frame around a window (no-op when the setting is off); returns an id for McpFlashRestart
 int McpFlash(HWND target, int style, int ms);
 void McpFlashRestart(int id);  // start the pulse/fade again (after a long action)
+// the agent's words (UTF-8) shown in a callout next to the NEXT highlight (frame) - the "say" argument
+void McpSay(const std::string& utf8);
+std::string McpPendingSay();
 int McpFlashRect(HWND target, const RECT& rel, int style, int ms);  // client-coords rectangle of a window
 int McpFlashScreen(const RECT& abs, int style, int ms);             // screen rectangle, topmost (menus)
 // control "" = the whole form; mode "frame" (default) or "color" (FormEx way)

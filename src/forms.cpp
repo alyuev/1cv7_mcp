@@ -309,6 +309,13 @@ static void Activate(const McpForm& f) {
 // inside modal loops. While 1C runs a long formula the frame simply stands still.
 bool g_mcpHighlight = true;
 
+#define CLEARTYPE_QUALITY_OR_DEFAULT 5  // CLEARTYPE_QUALITY
+#ifndef SM_CXVIRTUALSCREEN
+#define SM_XVIRTUALSCREEN 76
+#define SM_YVIRTUALSCREEN 77
+#define SM_CXVIRTUALSCREEN 78
+#define SM_CYVIRTUALSCREEN 79
+#endif
 #ifndef WS_EX_NOACTIVATE
 #define WS_EX_NOACTIVATE 0x08000000L
 #endif
@@ -352,6 +359,7 @@ struct HlItem {
     RECT rel;
     bool hasAbs;       // abs: screen rectangle without a window (a menu item), drawn topmost
     RECT abs;
+    HWND tip;          // callout with the agent's words next to the target (say)
 };
 static std::vector<HlItem> g_hl;
 static UINT g_hlTimer = 0;
@@ -395,7 +403,86 @@ static COLORREF Mix(COLORREF a, COLORREF b, double f) {
                (int)(GetBValue(a) + (GetBValue(b) - GetBValue(a)) * f));
 }
 
+// ---- callout: a small note next to the target ("say"), text UTF-16, drawn by its own window
+static std::string g_say;  // UTF-8; taken by the next highlight (McpSay)
+void McpSay(const std::string& utf8) { g_say = utf8; }
+std::string McpPendingSay() { return g_say; }
+
+static LRESULT CALLBACK TipProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    if(msg == WM_PAINT) {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        RECT r;
+        GetClientRect(h, &r);
+        HBRUSH bg = CreateSolidBrush(RGB(255, 249, 214));
+        HPEN pen = CreatePen(PS_SOLID, 2, RGB(226, 120, 0));
+        HGDIOBJ ob = SelectObject(dc, bg), op = SelectObject(dc, pen);
+        RoundRect(dc, r.left + 1, r.top + 1, r.right, r.bottom, 10, 10);
+        SelectObject(dc, ob);
+        SelectObject(dc, op);
+        DeleteObject(bg);
+        DeleteObject(pen);
+        HFONT f = (HFONT)GetProp(h, "font");
+        HGDIOBJ of = SelectObject(dc, f);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(40, 30, 0));
+        InflateRect(&r, -9, -6);
+        const wchar_t* t = (const wchar_t*)GetWindowLong(h, GWL_USERDATA);
+        if(t) DrawTextW(dc, t, -1, &r, DT_WORDBREAK | DT_NOPREFIX);
+        SelectObject(dc, of);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    if(msg == WM_NCHITTEST) return HTTRANSPARENT;
+    if(msg == WM_DESTROY) {
+        delete[] (wchar_t*)GetWindowLong(h, GWL_USERDATA);
+        HFONT f = (HFONT)RemoveProp(h, "font");
+        if(f) DeleteObject(f);
+    }
+    return DefWindowProc(h, msg, wp, lp);
+}
+
+static HWND Callout(const std::string& utf8, HWND owner) {
+    static bool reg = false;
+    extern HINSTANCE g_hInstDll;
+    if(!reg) {
+        WNDCLASSA wc;
+        memset(&wc, 0, sizeof(wc));
+        wc.lpfnWndProc = TipProc;
+        wc.hInstance = g_hInstDll;
+        wc.lpszClassName = "1cmcpCallout";
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        RegisterClassA(&wc);
+        reg = true;
+    }
+    int n = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, NULL, 0);
+    if(n <= 1) return NULL;
+    wchar_t* w = new wchar_t[n];
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, w, n);
+    DWORD ex = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | (LayeredFn() ? WS_EX_LAYERED : 0);
+    HWND h = CreateWindowExA(ex, "1cmcpCallout", "", WS_POPUP, 0, 0, 10, 10, owner, NULL, g_hInstDll, NULL);
+    if(!h) {
+        delete[] w;
+        return NULL;
+    }
+    SetWindowLong(h, GWL_USERDATA, (LONG)w);
+    HFONT f = CreateFontA(-15, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY_OR_DEFAULT, 0,
+                          "Tahoma");
+    SetProp(h, "font", f);
+    // size by the text, at most 380 px wide
+    HDC dc = GetDC(h);
+    HGDIOBJ of = SelectObject(dc, f);
+    RECT r = {0, 0, 380, 0};
+    DrawTextW(dc, w, -1, &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(dc, of);
+    ReleaseDC(h, dc);
+    SetWindowPos(h, NULL, 0, 0, r.right + 20, r.bottom + 14, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    if(LayeredFn()) LayeredFn()(h, 0, 0, LWA_ALPHA);
+    return h;
+}
+
 static void HlUndo(HlItem& it) {
+    if(it.tip && IsWindow(it.tip)) DestroyWindow(it.tip);
     for(int i = 0; i < 4; i++)
         if(it.strips[i] && IsWindow(it.strips[i])) DestroyWindow(it.strips[i]);
     if(it.ctl && it.frame && IsWindow(it.frame) && it.wnd && IsWindow(it.wnd)) {
@@ -442,6 +529,20 @@ static bool HlStep(HlItem& it, DWORD now) {
     int w = r.right - r.left, h = r.bottom - r.top, th = st.thick;
     int pos[4][4] = {{r.left, r.top, w, th}, {r.left, r.bottom - th, w, th}, {r.left, r.top, th, h},
                      {r.right - th, r.top, th, h}};
+    if(it.tip) {
+        RECT tr;
+        GetWindowRect(it.tip, &tr);
+        int tw = tr.right - tr.left, tht = tr.bottom - tr.top;
+        int sw = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int sh = GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        int x = r.left, y = r.bottom + 4;
+        if(y + tht > sh) y = r.top - tht - 4;
+        if(x + tw > sw) x = sw - tw - 4;
+        BYTE ta = (BYTE)(t < 250 ? 255 * t / 250 : alpha);  // fades in, then with the frame
+        if(LayeredFn()) LayeredFn()(it.tip, 0, ta, LWA_ALPHA);
+        SetWindowPos(it.tip, it.hasAbs ? HWND_TOPMOST : HWND_TOP, x, y, 0, 0,
+                     SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
     for(int i = 0; i < 4; i++) {
         HWND s = it.strips[i];
         SetWindowLong(s, GWL_USERDATA, (LONG)col);
@@ -471,6 +572,12 @@ static VOID CALLBACK HlTimer(HWND, UINT, UINT, DWORD) {
 }
 
 static int HlAdd(HlItem& it, int ms) {
+    if(!g_say.empty()) {
+        CMDIFrameWnd* mf = GetMainFrame();
+        it.tip = Callout(g_say, it.hasAbs ? NULL : (mf ? mf->m_hWnd : NULL));
+        g_say.erase();
+        if(ms < 3500) ms = 3500;  // time to read
+    }
     it.id = g_hlNextId++;
     it.start = GetTickCount();
     it.ms = ms < 400 ? 400 : ms;
@@ -542,7 +649,10 @@ static bool HlColor(const McpForm& f, const McpCtrl& m, COLORREF col, int ms) {
         }
     }
     RedrawWindow(m.wnd, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    std::string keep = g_say;  // the callout goes with the frame, not with the colour
+    g_say.erase();
     HlAdd(it, ms);
+    g_say = keep;
     return true;
 }
 

@@ -100,6 +100,7 @@ Token=<не короче 16 символов>
 AllowCode=1
 AutoStart=0
 Highlight=1
+Language=ru    (ru, en, bg - язык надписей ИИ на экране; пусто - язык Windows)
 """),
     item("ПодключениеАгента", "", "Подключение Claude Code", "", """
 @Описание:
@@ -202,7 +203,7 @@ methods = [
 <Имя> - Строка. Имя инструмента MCP, выполняемого в главном потоке: eval, run_code,
 read_messages, clear_messages, forms, form_controls, press_button, system_command, metadata,
 call_form_procedure, read_table, object_id, open_object, highlight, set_value, ui_find,
-show_menu.
+show_menu, caption.
 <АргументыJSON> - Строка. Аргументы в JSON, например {QexpressionQ:Q2+2Q}.
 @Возвращаемое значение:
 Строка. Ответ инструмента (JSON), как его получил бы агент.
@@ -308,6 +309,15 @@ seconds - сколько держать (2).
 оранжево-красная рамка вокруг кнопки, run_code с form, call_form_procedure, read_table,
 open_object - синяя рамка вокруг формы. Отключается флажком на вкладке
 "MCP-сервер" (Highlight=0 в 1cmcp.ini).
+"""),
+    item("caption", "", "caption", "", """
+@Параметры:
+text; form / control / command / toolbar - где показать (по умолчанию у активной формы);
+seconds (4).
+@Назначение:
+Облачко с текстом рядом с формой, элементом или кнопкой панели. У инструментов действий
+есть параметр say - такое же пояснение к самому действию. Язык надписей - Language в
+1cmcp.ini (ru, en, bg). Демо-режим - MCP-prompt demo.
 """),
     item("set_value", "", "set_value", "", """
 @Параметры:

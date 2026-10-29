@@ -188,7 +188,13 @@ class CMcpHost : public McpHost {
         if(m_wnd) PostMessage(m_wnd, WM_MCP_WAKE, 0, 0);
     }
 
+    struct SayScope {  // the agent's note for this call only
+        SayScope(const std::string& s) { McpSay(s); }
+        ~SayScope() { McpSay(""); }
+    };
+
     virtual bool RunTool(const std::string& tool, const JVal& args, std::string& text) {
+        SayScope say(args.get("say").asStr());
         if(tool == "eval")
             return RunModule("Результат = " + Utf8ToCp1251(args.get("expression").asStr()) + ";\r\n", 1, text);
         if(tool == "run_code") {
@@ -208,6 +214,35 @@ class CMcpHost : public McpHost {
             return RunModule(Utf8ToCp1251(args.get("code").asStr()), 0, text, ctx, fm);
         }
         if(tool == "metadata") return Metadata(args, text);
+        if(tool == "caption") {
+            // a note on screen: at a toolbar button / toolbar, at a control or a form (default: active form)
+            JVal r = JVal::object();
+            std::string err;
+            McpSay(args.get("text").asStr());
+            double sec = args.get("seconds").asNum(4);
+            const JVal& cmd = args.get("command");
+            UINT cmdId = (UINT)(cmd.isNum() ? cmd.asNum() : atol(cmd.asStr().c_str()));
+            bool ok;
+            if(cmdId || !args.get("toolbar").asStr().empty())
+                ok = McpUiHighlight(cmdId, args.get("toolbar").asStr(), (int)(sec * 1000), r, err);
+            else {
+                McpForm f;
+                if(McpFindForm(args, f, err)) {
+                    const JVal& ctl = args.get("control");
+                    ok = McpHighlight(f, ctl.isNum() ? NumStr(ctl.asNum()) : ctl.asStr(), "frame", (int)(sec * 1000), r,
+                                      err);
+                } else {  // nothing open: at the main window
+                    bool saved = g_mcpHighlight;
+                    g_mcpHighlight = true;
+                    CWnd* mw = AfxGetMainWnd();
+                    ok = mw && McpFlash(mw->m_hWnd, MCP_HL_FORM, (int)(sec * 1000)) != 0;
+                    g_mcpHighlight = saved;
+                }
+            }
+            if(!ok) r.set("error", JVal::string(err));
+            text = r.dump();
+            return ok;
+        }
         if(tool == "ui_find") {
             text = McpUiFind(args.get("text").asStr()).dump();
             return true;
@@ -246,7 +281,7 @@ class CMcpHost : public McpHost {
                 }
             }
             std::string json;
-            bool ok = RunModule("Результат = " + name + ";\r\n" + name + " = " + expr + ";\r\n", 0, json,
+            bool ok = RunModule("Результат = " + name + ";\r\n" + name + " = " + expr + ";\r\nФорма.Обновить();\r\n", 0, json,
                                 McpFormContext(f), McpFormModule(f));
             JVal r, rr;
             std::string e2;
@@ -261,7 +296,7 @@ class CMcpHost : public McpHost {
             if(ok) {
                 JVal hi = JVal::object();
                 bool saved = g_mcpHighlight;
-                if(saved) McpHighlight(f, name, "", 2500, hi, e2);  // the field: colour + frame
+                if(saved) McpHighlight(f, Cp1251ToUtf8(name), "", 2500, hi, e2);  // the field: colour + frame
                 g_mcpHighlight = saved;
             }
             text = r.dump();
@@ -679,6 +714,7 @@ void McpLoadSettings(McpSettings& s) {
     s.allowCode = TRUE;
     s.autoStart = FALSE;
     s.highlight = TRUE;
+    s.language.Empty();
     CString p = McpSettingsPath();
     if(p.IsEmpty()) return;
     char buf[512];
@@ -690,6 +726,8 @@ void McpLoadSettings(McpSettings& s) {
     s.allowCode = GetPrivateProfileIntA("Server", "AllowCode", 1, p) != 0;
     s.autoStart = GetPrivateProfileIntA("Server", "AutoStart", 0, p) != 0;
     s.highlight = GetPrivateProfileIntA("Server", "Highlight", 1, p) != 0;
+    GetPrivateProfileStringA("Server", "Language", "", buf, sizeof(buf), p);
+    s.language = buf;
     g_mcpHighlight = s.highlight != 0;  // what is in the file is what is shown
 }
 
@@ -704,7 +742,21 @@ BOOL McpSaveSettings(const McpSettings& s) {
            WritePrivateProfileStringA("Server", "AllowCode", s.allowCode ? "1" : "0", p) &&
            WritePrivateProfileStringA("Server", "AutoStart", s.autoStart ? "1" : "0", p) &&
            (g_mcpHighlight = s.highlight != 0, 1) &&
-           WritePrivateProfileStringA("Server", "Highlight", s.highlight ? "1" : "0", p);
+           WritePrivateProfileStringA("Server", "Highlight", s.highlight ? "1" : "0", p) &&
+           WritePrivateProfileStringA("Server", "Language", s.language.IsEmpty() ? NULL : (LPCSTR)s.language, p);
+}
+
+// ru / en / bg: from the settings, else from the Windows UI language (Russian, Bulgarian, else English)
+CString McpLanguage(const McpSettings& s) {
+    CString l = s.language;
+    l.MakeLower();
+    if(l == "ru" || l == "en" || l == "bg") return l;
+    typedef LANGID(WINAPI * Fn)(void);
+    Fn fn = (Fn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetUserDefaultUILanguage");
+    LANGID id = fn ? fn() : GetUserDefaultLangID();
+    if(PRIMARYLANGID(id) == LANG_RUSSIAN) return "ru";
+    if(PRIMARYLANGID(id) == LANG_BULGARIAN) return "bg";
+    return "en";
 }
 
 BOOL McpServerStart(const McpSettings& s, CString& err) {
@@ -715,6 +767,7 @@ BOOL McpServerStart(const McpSettings& s, CString& err) {
     cfg.token = (LPCSTR)s.token;
     cfg.bindAddr = s.addr.IsEmpty() ? "127.0.0.1" : (LPCSTR)s.addr;
     cfg.allowCode = s.allowCode != 0;
+    cfg.language = (LPCSTR)McpLanguage(s);
 
     CWnd* mainWnd = AfxGetMainWnd();
     cfg.mainWnd = mainWnd ? mainWnd->m_hWnd : NULL;

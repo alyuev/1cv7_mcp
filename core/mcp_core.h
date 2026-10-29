@@ -37,6 +37,7 @@ struct McpConfig {
     std::string baseInfo;   // free text about the infobase, shown in initialize/status
     HWND mainWnd;           // 1C main frame (modal detection, screen)
     bool allowCode;         // eval/run_code allowed
+    std::string language;   // ru / en / bg: language of the agent's notes on screen (say, caption)
     McpConfig() : bindAddr("127.0.0.1"), port(8777), mainWnd(NULL), allowCode(true) {}
 };
 

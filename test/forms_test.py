@@ -154,6 +154,16 @@ r, _ = call("run_code", form="Автотест", code="Результат = Со
 check(not err and r.get("result", {}).get("value") == "значение от MCP", "set_value writes the form attribute", [sv, r])
 call("set_value", form="Автотест", field="ИмяВК", expression='""')
 
+pl = rpc("prompts/list")["result"]["prompts"]
+pg = rpc("prompts/get", {"name": "demo", "arguments": {"language": "en"}})["result"]["messages"][0]["content"]["text"]
+check([p["name"] for p in pl] == ["demo"] and "in English" in pg and "Do NOT press" in pg, "prompts: demo scenario, language", pl)
+cp, err = call("caption", text="проверка надписи", seconds=1)
+check(not err, "caption at the active form", cp)
+cp, err = call("highlight", form="Автотест", control="флДаты", seconds=1, say="надпись у флажка")
+check(not err and cp.get("mode") == "frame", "highlight with say", cp)
+init = rpc("initialize", {"protocolVersion": "2025-06-18"})["result"]
+check("prompts" in init["capabilities"] and "Язык надписей" in init["instructions"], "initialize: prompts capability, language", init)
+
 m, err = call("metadata", kind="справочник", name="тмц")
 check(not err and isinstance(m, str) and m.startswith("Справочник.ТМЦ") and "ДатаСоздания" in m and "Дата" in m,
       "metadata: справочник ТМЦ with its attribute (kind/name case-insensitive)", m)

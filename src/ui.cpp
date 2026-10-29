@@ -266,6 +266,7 @@ struct MenuNav {
     DWORD shownAt;
     UINT timer;
     bool shown;
+    std::string say;  // callout text for the item
 };
 static MenuNav g_nav;
 
@@ -335,6 +336,7 @@ static VOID CALLBACK NavTimer(HWND, UINT, UINT, DWORD) {
     if(GetMenuItemRect(n.level == 0 ? n.main : NULL, m, want, &r)) {
         bool saved = g_mcpHighlight;
         g_mcpHighlight = true;
+        McpSay(n.say);
         McpFlashScreen(r, MCP_HL_ACTION, n.keepMs + 300);
         g_mcpHighlight = saved;
     }
@@ -374,6 +376,7 @@ bool McpShowMenu(UINT command, const std::string& path, int keepMs, JVal& out, s
     g_nav.waitOpen = 0;
     g_nav.keepMs = keepMs < 1000 ? 1000 : keepMs;
     g_nav.shown = false;
+    g_nav.say = McpPendingSay();
     SetForegroundWindow(g_nav.main);
     PostMessage(g_nav.main, WM_SYSCOMMAND, SC_KEYMENU, 0);  // = Alt: menu bar, first item selected
     g_nav.timer = SetTimer(NULL, 0, 60, NavTimer);

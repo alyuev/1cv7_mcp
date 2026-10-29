@@ -444,6 +444,34 @@ static const char* kInstructions =
     "Работа с формами как у пользователя: forms (что открыто) -> form_controls (кнопки, поля, формулы) -> "
     "press_button или run_code с form (код выполняется в контексте формы); команды меню - system_command.";
 
+// the demo scenario given to the agent by prompts/get "demo"
+static std::string DemoScript(const std::string& lang) {
+    std::string L = lang == "en" ? "English" : lang == "bg" ? "Bulgarian" : "Russian";
+    return "Run a short visual DEMO of the 1cmcp MCP server inside this 1C:Enterprise 7.7 session. "
+           "Every on-screen note (the `say` argument and the `caption` tool) must be in " + L + ", short (one "
+           "sentence), friendly, explaining what you do and why. Pace: after each visible step wait ~3 seconds "
+           "(the notes stay ~4 s). SAFETY: this is the user's real database - do not write anything to the "
+           "database, do not post documents, do not press buttons that build/run/save/write; only change "
+           "attributes of the opened report form, and close it at the end without saving settings.\n"
+           "Steps:\n"
+           "1. caption (no form needed): greet and say a demo starts.\n"
+           "2. metadata kind=Отчет (and kind=Обработка if needed): pick a report whose form likely has a period "
+           "(dates) and some flags. Open it with run_code: ОткрытьФорму(\"Отчет.<Идентификатор>\"); "
+           "if a modal dialog appears, close it with dialog_button and pick another report.\n"
+           "3. forms + highlight of the whole form with say: which report this is.\n"
+           "4. form_controls: find date fields (value_type Дата), a text/number field, checkboxes, and the "
+           "button that builds the report (title like Сформировать / Выполнить / ОК / Build).\n"
+           "5. For 2-4 fields: set_value with a sensible value and say (e.g. the start of the current month for "
+           "a period start). For 1-2 checkboxes: press_button on the checkbox with say (checkboxes only!).\n"
+           "6. highlight the build button with say: 'now the report can be built - press it yourself' "
+           "(in " + L + "). Do NOT press it - the run time is unknown.\n"
+           "7. Optionally ui_find for the report name and show_menu with say: where this report is in the menu.\n"
+           "8. caption with a short summary of what the AI can do here (forms, values, buttons, menus, "
+           "reports, messages). Then close the report form: system_command 57602 with form=<the report> "
+           "(answer 'No'/'Нет' via dialog_button if 1C asks to save).\n"
+           "Report to the user in chat what was shown.";
+}
+
 JVal McpServer::Dispatch(const JVal& msg) {
     if(!msg.isObj()) return RpcError(JVal(), -32600, "Invalid Request");
     if(!msg.has("id")) return JVal();      // notification (e.g. notifications/initialized)
@@ -461,6 +489,9 @@ JVal McpServer::Dispatch(const JVal& msg) {
         JVal tools = JVal::object();
         tools.set("listChanged", JVal::boolean(false));
         caps.set("tools", tools);
+        JVal prompts = JVal::object();
+        prompts.set("listChanged", JVal::boolean(false));
+        caps.set("prompts", prompts);
         result.set("capabilities", caps);
         JVal info = JVal::object();
         info.set("name", JVal::string("1cmcp"));
@@ -469,6 +500,9 @@ JVal McpServer::Dispatch(const JVal& msg) {
         result.set("serverInfo", info);
         std::string instr = kInstructions;
         if(!m_cfg.baseInfo.empty()) instr += " Информационная база: " + m_cfg.baseInfo;
+        instr += " Язык надписей для пользователя на экране (say, caption): " +
+                 (m_cfg.language.empty() ? std::string("ru") : m_cfg.language) +
+                 " (ru - русский, en - английский, bg - болгарский). Демо-режим: prompt \"demo\".";
         result.set("instructions", JVal::string(instr));
     } else if(method == "ping") {
         // empty result
@@ -490,7 +524,30 @@ JVal McpServer::Dispatch(const JVal& msg) {
     } else if(method == "resources/list") {
         result.set("resources", JVal::array());
     } else if(method == "prompts/list") {
-        result.set("prompts", JVal::array());
+        JVal list = JVal::array(), pr = JVal::object(), args = JVal::array(), a = JVal::object();
+        pr.set("name", JVal::string("demo"));
+        pr.set("title", JVal::string("Демо 1cmcp"));
+        pr.set("description", JVal::string("Демонстрация: ИИ открывает отчёт, меняет реквизиты с подсветкой и "
+                                           "пояснениями на экране и показывает кнопку формирования (не нажимая её)."));
+        a.set("name", JVal::string("language"));
+        a.set("description", JVal::string("ru, en или bg; по умолчанию - язык из настроек компоненты"));
+        a.set("required", JVal::boolean(false));
+        args.push(a);
+        pr.set("arguments", args);
+        list.push(pr);
+        result.set("prompts", list);
+    } else if(method == "prompts/get") {
+        if(params.get("name").asStr() != "demo") return RpcError(id, -32602, "Unknown prompt");
+        std::string lang = params.get("arguments").get("language").asStr();
+        if(lang != "ru" && lang != "en" && lang != "bg") lang = m_cfg.language.empty() ? "ru" : m_cfg.language;
+        JVal msgs = JVal::array(), m = JVal::object(), content = JVal::object();
+        content.set("type", JVal::string("text"));
+        content.set("text", JVal::string(DemoScript(lang)));
+        m.set("role", JVal::string("user"));
+        m.set("content", content);
+        msgs.push(m);
+        result.set("description", JVal::string("Демо 1cmcp"));
+        result.set("messages", msgs);
     } else {
         return RpcError(id, -32601, "Method not found: " + method);
     }
@@ -528,6 +585,11 @@ static JVal Tool(const char* name, const char* title, const char* descr, const J
     ann.set("readOnlyHint", JVal::boolean(readOnly));
     t.set("annotations", ann);
     return t;
+}
+
+static void AddSay(JVal& p) {
+    p.set("say", Prop("string", "Пояснение для пользователя на экране: облачко рядом с подсвеченным элементом "
+                                "(на языке из instructions). Коротко: что и зачем делается."));
 }
 
 static void AddWaitProps(JVal& p) {
@@ -611,6 +673,7 @@ JVal McpServer::ToolsList() {
         p.set("button", Prop("string", "Кнопка или флажок: идентификатор (кнВыполнить), надпись (\"Выполнить "
                                        "запрос\", & и регистр не важны) или id из form_controls."));
         AddWaitProps(p);
+        AddSay(p);
         list.push(Tool("press_button", "Нажать кнопку формы",
                        "Нажимает кнопку (или флажок) открытой формы 1С так же, как пользователь мышью: 1С "
                        "выполняет её формулу (процедуру модуля формы или системное действие #Закрыть). Скрытую или "
@@ -626,6 +689,7 @@ JVal McpServer::ToolsList() {
         argsProp.set("items", JVal::object());
         p.set("args", argsProp);
         AddWaitProps(p);
+        AddSay(p);
         list.push(Tool("call_form_procedure", "Вызвать процедуру формы",
                        "Вызывает процедуру или функцию модуля открытой формы по имени - в том числе без Экспорт, "
                        "как это сделал бы сам модуль (например ЗагрузитьВариант() после установки реквизита "
@@ -640,6 +704,7 @@ JVal McpServer::ToolsList() {
         p.set("expression", Prop("string", "Или выражение 1С (вместо value): Дата(2026,1,31), "
                                            "Справочник.Валюты.НайтиПоКоду(\"USD\")..."));
         AddWaitProps(p);
+        AddSay(p);
         list.push(Tool("set_value", "Записать значение в реквизит формы",
                        "Присваивает реквизиту открытой формы значение (как код модуля формы) и подсвечивает поле, "
                        "чтобы пользователь видел, что изменилось. Возвращает прежнее значение (old). Формула "
@@ -651,6 +716,7 @@ JVal McpServer::ToolsList() {
                                    "код базы УРБД в скобках: O/1102/(ACC)8439502. Такой ИД даёт object_id."));
         p.set("open", Prop("boolean", "Открыть форму объекта (по умолчанию true); false - только найти."));
         AddWaitProps(p);
+        AddSay(p);
         list.push(Tool("open_object", "Открыть объект по ИД",
                        "Находит документ или элемент справочника по короткому ИД (строится из внутреннего "
                        "представления значения ЗначениеВСтрокуВнутр: вид и код объекта, код базы УРБД) и "
@@ -690,6 +756,7 @@ JVal McpServer::ToolsList() {
     p.set("max_rows", Prop("number", "Максимум строк (по умолчанию 200)."));
     p.set("max_columns", Prop("number", "Максимум колонок (по умолчанию 50)."));
     AddWaitProps(p);
+    AddSay(p);
     list.push(Tool("read_table", "Прочитать таблицу",
                    "Текст ячеек открытого табличного документа (окно вида Таблица: результат отчёта, "
                    "печатная форма, Таблица.Показать()) - то, что видит пользователь. rows - массив строк, "
@@ -718,6 +785,21 @@ JVal McpServer::ToolsList() {
     p.set("command", Prop("number", "Обвести кнопки панелей инструментов с этой командой (код из ui_find)."));
     p.set("toolbar", Prop("string", "Обвести панель инструментов целиком (часть названия: Стандартная, Сервис)."));
     AddWaitProps(p);
+    AddSay(p);
+    {
+        JVal q = JVal::object();
+        q.set("text", Prop("string", "Текст надписи (на языке из instructions)."));
+        q.set("form", Prop("string", "Форма (номер, hwnd, часть заголовка); по умолчанию активная."));
+        q.set("control", Prop("string", "Элемент формы, у которого показать надпись; пусто - у формы."));
+        q.set("command", Prop("number", "Или кнопка панели инструментов с этой командой (из ui_find)."));
+        q.set("toolbar", Prop("string", "Или панель инструментов (часть названия)."));
+        q.set("seconds", Prop("number", "Сколько секунд показывать (по умолчанию 4)."));
+        AddWaitProps(q);
+        list.push(Tool("caption", "Надпись на экране",
+                       "Показывает пользователю облачко с текстом рядом с элементом формы, формой или кнопкой "
+                       "панели (с рамкой вокруг цели). Для пояснений и демо-режима. Ничего не меняет в 1С.",
+                       q, "text", true));
+    }
     list.push(Tool("highlight", "Показать элемент",
                    "Подсвечивает элемент формы или всю форму, чтобы показать пользователю, о чём речь "
                    "(\"вот это поле\"). Действия агента подсвечиваются и сами: press_button - красная рамка "
@@ -740,6 +822,7 @@ JVal McpServer::ToolsList() {
     p.set("path", Prop("string", "Или путь пункта меню: \"Сервис > Табло\" (можно часть)."));
     p.set("seconds", Prop("number", "Сколько секунд держать меню открытым (по умолчанию 5)."));
     AddWaitProps(p);
+    AddSay(p);
     list.push(Tool("show_menu", "Показать пункт меню",
                    "Раскрывает главное меню 1С до пункта (как пользователь стрелками с клавиатуры), обводит "
                    "пункт рамкой и через seconds закрывает меню. Сам пункт не выбирает. Отвечает сразу, "
@@ -810,7 +893,7 @@ JVal McpServer::CallTool(const std::string& name, const JVal& args, bool& isErro
         else text = Run1C(name, args, isError, pending);
     } else if(name == "read_messages" || name == "clear_messages" || name == "forms" || name == "form_controls" ||
               name == "metadata" || name == "read_table" || name == "object_id" || name == "highlight" ||
-              name == "ui_find" || name == "show_menu")
+              name == "ui_find" || name == "show_menu" || name == "caption")
         text = Run1C(name, args, isError, pending);
     else
         return JVal();
