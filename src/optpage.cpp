@@ -143,7 +143,7 @@ class CMcpOptPage : public IPropertyPage {
         CheckDlgButton(m_hwnd, IDC_ACTIONWIN, s.actionWindow ? BST_CHECKED : BST_UNCHECKED);
         SetDlgItemTextA(m_hwnd, IDC_LOGFILE, s.logFile);
         SetDlgItemTextA(m_hwnd, IDC_INIPATH, "Файл настроек: " + McpSettingsPath());
-        SetDlgItemTextA(m_hwnd, IDC_VERSION, "Состояние (1cmcp " MCP_VERSION ")");
+        SetDlgItemTextA(m_hwnd, IDC_VERSION, "Сервер MCP для ИИ-агентов (1cmcp " MCP_VERSION ")");
         m_filling = FALSE;
         m_dirty = FALSE;
         UpdateStatus();
