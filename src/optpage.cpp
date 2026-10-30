@@ -224,7 +224,7 @@ class CMcpOptPage : public IPropertyPage {
         if(!McpRunningSettings(s)) Read(s);
         CString host = s.addr == "0.0.0.0" ? CString("127.0.0.1") : s.addr;
         CString cmd;
-        cmd.Format("claude mcp add --transport http 1c http://%s:%d/mcp", (LPCSTR)host, s.port);
+        cmd.Format("claude mcp add --transport http %s http://%s:%d/mcp", (LPCSTR)McpServerName(), (LPCSTR)host, s.port);
         cmd += " --header \"Authorization: Bearer " + s.token + "\"";
         return cmd;
     }

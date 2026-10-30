@@ -250,6 +250,18 @@ int main() {
         printf("FAIL start: %s\nRESULT: FAIL\n", err.c_str());
         return 1;
     }
+    // a second server (another base on the same machine): refused on a taken port, or moves to the next free one
+    {
+        McpServer s2;
+        McpConfig c2 = cfg;
+        c2.auditPath = "";
+        std::string e2;
+        Check(!s2.Start(c2, &host, e2), "taken port: refused without fallback", e2);
+        c2.portFallback = 5;
+        bool ok2 = s2.Start(c2, &host, e2);
+        Check(ok2 && s2.Port() > PORT && s2.Port() <= PORT + 5, "taken port: the next free one is used", e2);
+        s2.Stop();
+    }
     unsigned tid;
     HANDLE ct = (HANDLE)_beginthreadex(NULL, 0, Client, NULL, 0, &tid);
     // fake 1C main thread

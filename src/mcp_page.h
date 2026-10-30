@@ -32,6 +32,7 @@ BOOL McpServerStart(const McpSettings& s, CString& err);  // restarts a running 
 void McpServerStop();
 BOOL McpServerRunning();
 CString McpServerUrl();
+CString McpServerName();  // name for "claude mcp add": 1c-<infobase folder>, Latin letters/digits only
 BOOL McpRunningSettings(McpSettings& s);  // what the running server was started with
 long McpServerRequests();
 CString McpNewToken();

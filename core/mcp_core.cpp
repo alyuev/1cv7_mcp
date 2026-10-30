@@ -154,25 +154,43 @@ bool McpServer::Start(const McpConfig& cfg, McpHost* host, std::string& err) {
     if(!err.empty()) return false;
     WSADATA wd;
     if(WSAStartup(MAKEWORD(2, 2), &wd) != 0) { err = "WSAStartup failed"; return false; }
-    m_listen = (unsigned int)socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if((SOCKET)m_listen == INVALID_SOCKET) { err = "socket() failed"; WSACleanup(); return false; }
-    BOOL excl = TRUE;
-    setsockopt((SOCKET)m_listen, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&excl, sizeof(excl));
     sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
-    sa.sin_port = htons((u_short)m_cfg.port);
     sa.sin_addr.s_addr = inet_addr(m_cfg.bindAddr == "localhost" ? "127.0.0.1" : m_cfg.bindAddr.c_str());
     if(sa.sin_addr.s_addr == INADDR_NONE) {
         err = "bad bind address: " + m_cfg.bindAddr;
-        closesocket((SOCKET)m_listen); m_listen = (unsigned int)INVALID_SOCKET; WSACleanup();
+        WSACleanup();
         return false;
     }
-    if(bind((SOCKET)m_listen, (sockaddr*)&sa, sizeof(sa)) != 0 || listen((SOCKET)m_listen, 16) != 0) {
-        char buf[128];
-        sprintf(buf, "cannot listen on %s:%d (WSA error %d)", m_cfg.bindAddr.c_str(), m_cfg.port, WSAGetLastError());
+    // several bases / users on one machine: when the port is taken, the next free one is used
+    const int wantPort = m_cfg.port;
+    int tries = 1 + (m_cfg.portFallback > 0 ? m_cfg.portFallback : 0);
+    int lastErr = 0;
+    bool bound = false;
+    for(int t = 0; t < tries && wantPort + t <= 65535 && !bound; t++) {
+        m_listen = (unsigned int)socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if((SOCKET)m_listen == INVALID_SOCKET) { err = "socket() failed"; WSACleanup(); return false; }
+        BOOL excl = TRUE;
+        setsockopt((SOCKET)m_listen, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&excl, sizeof(excl));
+        m_cfg.port = wantPort + t;
+        sa.sin_port = htons((u_short)m_cfg.port);
+        if(bind((SOCKET)m_listen, (sockaddr*)&sa, sizeof(sa)) == 0 && listen((SOCKET)m_listen, 16) == 0) {
+            bound = true;
+            break;
+        }
+        lastErr = WSAGetLastError();
+        closesocket((SOCKET)m_listen);
+        m_listen = (unsigned int)INVALID_SOCKET;
+        if(lastErr != WSAEADDRINUSE && lastErr != WSAEACCES) break;  // another trouble: the next port will not help
+    }
+    if(!bound) {
+        char buf[160];
+        sprintf(buf, "cannot listen on %s:%d%s (WSA error %d)", m_cfg.bindAddr.c_str(), wantPort,
+                tries > 1 ? " and the following ports" : "", lastErr);
         err = buf;
-        closesocket((SOCKET)m_listen); m_listen = (unsigned int)INVALID_SOCKET; WSACleanup();
+        m_cfg.port = wantPort;
+        WSACleanup();
         return false;
     }
     m_running = 1;
@@ -189,6 +207,10 @@ bool McpServer::Start(const McpConfig& cfg, McpHost* host, std::string& err) {
     sprintf(buf, "ЗАПУСК сервера MCP %s: адрес %s:%d, пользователь 1С %s, код 1С %s, журнал вызовов: ", MCP_VERSION,
             m_cfg.bindAddr.c_str(), m_cfg.port, m_cfg.userName.c_str(), m_cfg.allowCode ? "разрешён" : "запрещён");
     Audit(std::string(buf) + Cp1251ToUtf8(m_cfg.auditPath));
+    if(m_cfg.port != wantPort) {
+        sprintf(buf, "ПОРТ %d занят другим сервером (другая база или сеанс), использован %d", wantPort, m_cfg.port);
+        Audit(buf);
+    }
     sprintf(buf, " %s:%d (%s)", m_cfg.bindAddr.c_str(), m_cfg.port, m_cfg.userName.c_str());
     Report(McpWord("started", m_cfg.language) + buf, MCP_REP_INFO);
     return true;

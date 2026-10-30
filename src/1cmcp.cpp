@@ -854,11 +854,35 @@ BOOL McpServerSetLogPath(const CString& path, BOOL save) {
     return TRUE;
 }
 
+// "1c-<folder of the infobase>": one MCP server entry per base, so that the agent tells them apart
+CString McpServerName() {
+    static const char* tr[32] = {"a", "b", "v", "g", "d", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p",
+                                 "r", "s", "t", "u", "f", "h", "c", "ch", "sh", "sch", "", "y", "", "e", "yu", "ya"};
+    CString dir = BaseDir();
+    while(dir.Right(1) == "\\") dir = dir.Left(dir.GetLength() - 1);
+    int p = dir.ReverseFind('\\');
+    CString last = p >= 0 ? dir.Mid(p + 1) : dir;
+    CString name;
+    for(int i = 0; i < last.GetLength(); i++) {
+        unsigned char ch = (unsigned char)last[i];
+        if(ch >= 0xC0) ch |= 0x20;  // upper -> lower case Cyrillic
+        if(ch >= 0xE0) name += tr[ch - 0xE0];
+        else if(ch == 0xB8 || ch == 0xA8) name += "e";
+        else if((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) name += (char)ch;
+        else if(ch >= 'A' && ch <= 'Z') name += (char)(ch + 32);
+        else if(ch == ' ' || ch == '_' || ch == '-' || ch == '.') name += '-';
+    }
+    name.TrimLeft("-");
+    name.TrimRight("-");
+    return name.IsEmpty() ? CString("1c") : "1c-" + name;
+}
+
 BOOL McpServerStart(const McpSettings& s, CString& err) {
     err = McpTokenProblem(s.token);
     if(!err.IsEmpty()) return FALSE;
     McpConfig cfg;
     cfg.port = s.port > 0 ? s.port : 8777;
+    cfg.portFallback = 22;  // taken by another base: the next free port
     cfg.token = (LPCSTR)s.token;
     cfg.bindAddr = s.addr.IsEmpty() ? "127.0.0.1" : (LPCSTR)s.addr;
     cfg.allowCode = s.allowCode != 0;
@@ -904,9 +928,10 @@ BOOL McpServerStart(const McpSettings& s, CString& err) {
         err = e.c_str();
         return FALSE;
     }
-    g_url.Format("http://%s:%d/mcp", cfg.bindAddr.c_str(), cfg.port);
+    int port = g_server->Port();
+    g_url.Format("http://%s:%d/mcp", cfg.bindAddr.c_str(), port);
     g_run = s;
-    g_run.port = cfg.port;
+    g_run.port = port;
     g_run.addr = cfg.bindAddr.c_str();
     return TRUE;
 }

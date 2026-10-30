@@ -35,6 +35,7 @@ std::string McpCheckToken(const std::string& token);
 struct McpConfig {
     std::string bindAddr;   // default 127.0.0.1
     int port;               // default 8777
+    int portFallback;       // if the port is taken: try up to this many following ports (0 = only the given one)
     std::string token;      // Bearer token, required: >= MCP_MIN_TOKEN printable ASCII chars
     std::string mlgPath;    // 1C log (SYSLOG\1cv7.mlg), for read_log
     std::string auditPath;  // own call log, empty = off
@@ -45,7 +46,7 @@ struct McpConfig {
     std::string userName;   // 1C user the session runs under (for the call log)
     std::string computer;   // computer name
     unsigned long pid;      // process id of this 1cv7.exe (the 1C session)
-    McpConfig() : bindAddr("127.0.0.1"), port(8777), mainWnd(NULL), allowCode(true), pid(0) {}
+    McpConfig() : bindAddr("127.0.0.1"), port(8777), portFallback(0), mainWnd(NULL), allowCode(true), pid(0) {}
 };
 
 // who sends a request: the MCP session (header Mcp-Session-Id) and the peer address
@@ -64,6 +65,7 @@ class McpServer {
     bool Start(const McpConfig& cfg, McpHost* host, std::string& err);
     void Stop();
     bool IsRunning() const { return m_running != 0; }
+    int Port() const { return m_cfg.port; }  // the port actually listened on
     long RequestCount() const { return m_requests; }
 
     // 1C main thread: run queued 1C tasks. Safe against re-entry
