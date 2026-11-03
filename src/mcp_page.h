@@ -38,6 +38,10 @@ long McpServerRequests();
 CString McpNewToken();
 CString McpTokenProblem(const CString& token);  // empty = ok, else reason
 
+// technical trace of the options page (1cmcp_trace.log next to 1cmcp.ini), implemented in 1cmcp.cpp
+void McpTrace(const char* fmt, ...);
+long McpTraceExc(const char* where, void* exceptionPointers);  // logs an SEH exception, returns EXCEPTION_EXECUTE_HANDLER
+
 // implemented in optpage.cpp
 void McpRegisterOptionsPage();
 void McpUnregisterOptionsPage();

@@ -100,6 +100,8 @@ class McpServer {
 
     // 1C tools: queue for the main thread and wait
     std::string Run1C(const std::string& tool, const JVal& args, bool& isError, bool& pending);
+    // title of the form named in args ("form"), asked from the 1C main thread for up to 0.5 s; empty if unknown
+    std::string FormTitle(const JVal& args);
     std::string AddModalInfo(const std::string& pendingJson);  // no m_cs held
     std::string TaskToText(McpTask* t);
     McpTask* FindTask(int id);

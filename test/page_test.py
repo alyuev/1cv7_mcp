@@ -96,7 +96,7 @@ print("status text:", status)
 # the test base starts the server from code (port 18777, test token) - not with the saved settings:
 # the page must say so, and the copied command must point at the running server
 note_ok = "18777" in status and "другими параметрами" in status
-ver_ok = ("Версия компоненты: 1cmcp " + VERSION) in texts
+ver_ok = any(("(1cmcp " + VERSION + ")") in x for x in texts)  # the caption of the top frame
 print("version on the page:", ver_ok, VERSION)
 print("mismatch explained:", note_ok)
 import win32clipboard

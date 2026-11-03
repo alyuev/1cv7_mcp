@@ -458,6 +458,12 @@ class CMcpHost : public McpHost {
             text = r.dump();
             return ok;
         }
+        if(tool == "_form_title") {  // internal: the title of the form for the call log line
+            McpForm f;
+            std::string err;
+            text = McpFindForm(args, f, err) ? Cp1251ToUtf8((LPCSTR)f.title) : std::string();
+            return true;
+        }
         if(tool == "close_form") {
             McpForm f;
             std::string err;
@@ -724,6 +730,86 @@ static CString SettingsDir() {
     return g_userDir;
 }
 
+// ---- technical trace: what the options page and the server control do, with thread ids and
+// exceptions; kept small (cut at 256 KB). No 1C calls here: it may run when 1C is in a bad state.
+static CRITICAL_SECTION g_traceCs;
+static LONG g_traceInit = 0;
+
+static void TraceLock() {
+    if(InterlockedExchange(&g_traceInit, 1) == 0) InitializeCriticalSection(&g_traceCs);
+    EnterCriticalSection(&g_traceCs);
+}
+
+static void TraceWrite(const char* line) {
+    char path[MAX_PATH + 32];
+    if(!g_userDir.IsEmpty()) lstrcpynA(path, g_userDir, MAX_PATH);
+    else if(!GetTempPathA(MAX_PATH, path)) return;
+    lstrcatA(path, "1cmcp_trace.log");
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    TraceLock();
+    HANDLE f = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+    if(f != INVALID_HANDLE_VALUE) {
+        if(GetFileSize(f, NULL) > 262144) SetEndOfFile(f);  // restart the file
+        SetFilePointer(f, 0, NULL, FILE_END);
+        char out[1200];
+        int n = wsprintfA(out, "%04d-%02d-%02d %02d:%02d:%02d.%03d | v%s | pid %lu thr %lu | %s\r\n", st.wYear,
+                          st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, MCP_VERSION,
+                          GetCurrentProcessId(), GetCurrentThreadId(), line);
+        DWORD w;
+        WriteFile(f, out, n, &w, NULL);
+        CloseHandle(f);
+    }
+    LeaveCriticalSection(&g_traceCs);
+}
+
+// detailed trace only in the trace build (build.ps1 -Trace, /DMCP_TRACE): the component is not loaded yet
+// when the settings could be read, so the switch is made at build time
+void McpTrace(const char* fmt, ...) {
+#ifdef MCP_TRACE
+    char line[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    _vsnprintf(line, sizeof(line) - 1, fmt, ap);
+    va_end(ap);
+    line[sizeof(line) - 1] = 0;
+    TraceWrite(line);
+#endif
+}
+
+// exceptions are logged by every build: the file appears only when something really failed
+static void TraceExcF(const char* fmt, ...) {
+    char line[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    _vsnprintf(line, sizeof(line) - 1, fmt, ap);
+    va_end(ap);
+    line[sizeof(line) - 1] = 0;
+    TraceWrite(line);
+}
+
+long McpTraceExc(const char* where, void* exceptionPointers) {
+    EXCEPTION_POINTERS* ep = (EXCEPTION_POINTERS*)exceptionPointers;
+    char mod[MAX_PATH] = "?";
+    DWORD code = 0;
+    void* addr = NULL;
+    if(ep && ep->ExceptionRecord) {
+        code = ep->ExceptionRecord->ExceptionCode;
+        addr = ep->ExceptionRecord->ExceptionAddress;
+        MEMORY_BASIC_INFORMATION mbi;
+        if(VirtualQuery(addr, &mbi, sizeof(mbi)) && mbi.AllocationBase)
+            GetModuleFileNameA((HMODULE)mbi.AllocationBase, mod, sizeof(mod));
+    }
+    TraceExcF("ИСКЛЮЧЕНИЕ в %s: код 0x%08lX, адрес %p, модуль %s%s", where, code, addr, mod,
+             ep && ep->ExceptionRecord && ep->ExceptionRecord->NumberParameters >= 2 && code == 0xC0000005
+                 ? (ep->ExceptionRecord->ExceptionInformation[0] ? " (запись по адресу)" : " (чтение по адресу)")
+                 : "");
+    if(ep && ep->ExceptionRecord && code == 0xC0000005 && ep->ExceptionRecord->NumberParameters >= 2)
+        TraceExcF("  адрес обращения 0x%08lX", (unsigned long)ep->ExceptionRecord->ExceptionInformation[1]);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 CString McpSettingsPath() {
     CString d = SettingsDir();
     return d.IsEmpty() ? CString() : d + "1cmcp.ini";
@@ -963,6 +1049,10 @@ static UINT g_initTimer = 0;
 static VOID CALLBACK InitTimerProc(HWND, UINT, UINT, DWORD) {
     KillTimer(NULL, g_initTimer);
     g_initTimer = 0;
+    SettingsDir();  // the user folder first: the trace file lives there
+#ifdef MCP_TRACE
+    McpTrace("ТРАССИРОЧНАЯ сборка %s: запуск компоненты, регистрация страницы настроек", MCP_VERSION);
+#endif
     McpRegisterOptionsPage();
     MigrateSharedSettings();
     McpSettings s;
@@ -1130,6 +1220,7 @@ extern "C" int APIENTRY DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID) {
         // once the loader returns (nothing heavy may happen inside DllMain)
         g_initTimer = SetTimer(NULL, 0, 10, InitTimerProc);
     } else if(dwReason == DLL_PROCESS_DETACH) {
+        McpTrace("DLL выгружается (DLL_PROCESS_DETACH)");
         context_obj::CContextBase::DoneAllContextClasses();
     }
     return 1;

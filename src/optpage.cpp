@@ -44,30 +44,83 @@ class CMcpOptPage : public IPropertyPage {
         return InterlockedDecrement(&m_ref);
     }
 
-    // IPropertyPage
+    // IPropertyPage: every method is guarded - an exception is logged to 1cmcp_trace.log
+    // and turned into E_FAIL instead of taking 1C down
     STDMETHOD(SetPageSite)(IPropertyPageSite* site) {
+        __try { return SetPageSiteImpl(site); }
+        __except(McpTraceExc("SetPageSite", GetExceptionInformation())) { return E_FAIL; }
+    }
+    STDMETHOD(Activate)(HWND parent, LPCRECT rc, BOOL modal) {
+        __try { return ActivateImpl(parent, rc, modal); }
+        __except(McpTraceExc("Activate", GetExceptionInformation())) { return E_FAIL; }
+    }
+    STDMETHOD(Deactivate)() {
+        __try { return DeactivateImpl(); }
+        __except(McpTraceExc("Deactivate", GetExceptionInformation())) { m_hwnd = NULL; return E_FAIL; }
+    }
+    STDMETHOD(GetPageInfo)(PROPPAGEINFO* info) {
+        __try { return GetPageInfoImpl(info); }
+        __except(McpTraceExc("GetPageInfo", GetExceptionInformation())) { return E_FAIL; }
+    }
+    STDMETHOD(Show)(UINT cmd) {
+        __try { return ShowImpl(cmd); }
+        __except(McpTraceExc("Show", GetExceptionInformation())) { return E_FAIL; }
+    }
+    STDMETHOD(Move)(LPCRECT rc) {
+        __try { return MoveImpl(rc); }
+        __except(McpTraceExc("Move", GetExceptionInformation())) { return E_FAIL; }
+    }
+    STDMETHOD(Apply)() {
+        __try { return ApplyImpl(); }
+        __except(McpTraceExc("Apply", GetExceptionInformation())) { return E_FAIL; }
+    }
+    STDMETHOD(TranslateAccelerator)(MSG* msg) {
+        __try { return TranslateAcceleratorImpl(msg); }
+        __except(McpTraceExc("TranslateAccelerator", GetExceptionInformation())) { return S_FALSE; }
+    }
+    STDMETHOD(SetObjects)(ULONG, IUnknown**) { return S_OK; }
+    STDMETHOD(IsPageDirty)() { return m_dirty ? S_OK : S_FALSE; }
+    STDMETHOD(Help)(LPCOLESTR) { return E_NOTIMPL; }
+
+    HRESULT SetPageSiteImpl(IPropertyPageSite* site) {
+        McpTrace("Страница: SetPageSite(%p), был %p", site, m_site);
         if(m_site) m_site->Release();
         m_site = site;
         if(m_site) m_site->AddRef();
         return S_OK;
     }
-    STDMETHOD(Activate)(HWND parent, LPCRECT rc, BOOL) {
+    HRESULT ActivateImpl(HWND parent, LPCRECT rc, BOOL modal) {
+        McpTrace("Страница: Activate, родитель=0x%08lX (окно есть: %d), область=%s, modal=%d, старое окно=0x%08lX", (DWORD)parent,
+                 parent && IsWindow(parent), rc ? "да" : "НЕТ", modal, (DWORD)m_hwnd);
+        if(!rc || !parent || !IsWindow(parent)) return E_INVALIDARG;
+        if(m_hwnd) {  // activated again without Deactivate: do not lose the old window
+            McpTrace("Страница: Activate при живом окне, старое закрывается");
+            DeactivateImpl();
+        }
         m_hwnd = CreateDialogParamA(g_hInstDll, MAKEINTRESOURCE(IDD_MCP_PAGE), parent, DlgProc, (LPARAM)this);
-        if(!m_hwnd) return E_FAIL;
+        if(!m_hwnd) {
+            McpTrace("Страница: CreateDialogParam не удался, ошибка %lu, g_hInstDll=%p", GetLastError(), g_hInstDll);
+            return E_FAIL;
+        }
         MoveWindow(m_hwnd, rc->left, rc->top, rc->right - rc->left, rc->bottom - rc->top, TRUE);
         Fill();
         SetTimer(m_hwnd, STATUS_TIMER, 1000, NULL);
+        McpTrace("Страница: Activate выполнен, окно=0x%08lX", (DWORD)m_hwnd);
         return S_OK;
     }
-    STDMETHOD(Deactivate)() {
-        if(m_hwnd) {
-            KillTimer(m_hwnd, STATUS_TIMER);
-            DestroyWindow(m_hwnd);
-        }
+    HRESULT DeactivateImpl() {
+        McpTrace("Страница: Deactivate, окно=0x%08lX (живо: %d)", (DWORD)m_hwnd, m_hwnd && IsWindow(m_hwnd));
+        HWND w = m_hwnd;
         m_hwnd = NULL;
+        if(w && IsWindow(w)) {
+            KillTimer(w, STATUS_TIMER);
+            DestroyWindow(w);
+        }
+        McpTrace("Страница: Deactivate выполнен");
         return S_OK;
     }
-    STDMETHOD(GetPageInfo)(PROPPAGEINFO* info) {
+    HRESULT GetPageInfoImpl(PROPPAGEINFO* info) {
+        McpTrace("Страница: GetPageInfo");
         if(!info) return E_POINTER;
         info->cb = sizeof(PROPPAGEINFO);
         static const wchar_t title[] = L"MCP-\x0441\x0435\x0440\x0432\x0435\x0440";  // "MCP-сервер"
@@ -79,17 +132,18 @@ class CMcpOptPage : public IPropertyPage {
         info->dwHelpContext = 0;
         return S_OK;
     }
-    STDMETHOD(SetObjects)(ULONG, IUnknown**) { return S_OK; }
-    STDMETHOD(Show)(UINT cmd) {
-        if(m_hwnd) ShowWindow(m_hwnd, cmd);
+    HRESULT ShowImpl(UINT cmd) {
+        McpTrace("Страница: Show(%u), окно=0x%08lX", cmd, (DWORD)m_hwnd);
+        if(m_hwnd && IsWindow(m_hwnd)) ShowWindow(m_hwnd, cmd);
         return S_OK;
     }
-    STDMETHOD(Move)(LPCRECT rc) {
-        if(m_hwnd) MoveWindow(m_hwnd, rc->left, rc->top, rc->right - rc->left, rc->bottom - rc->top, TRUE);
+    HRESULT MoveImpl(LPCRECT rc) {
+        if(rc && m_hwnd && IsWindow(m_hwnd))
+            MoveWindow(m_hwnd, rc->left, rc->top, rc->right - rc->left, rc->bottom - rc->top, TRUE);
         return S_OK;
     }
-    STDMETHOD(IsPageDirty)() { return m_dirty ? S_OK : S_FALSE; }
-    STDMETHOD(Apply)() {
+    HRESULT ApplyImpl() {
+        McpTrace("Страница: Apply, окно=0x%08lX, изменено=%d", (DWORD)m_hwnd, m_dirty);
         if(!m_hwnd || !m_dirty) return S_OK;
         McpSettings s;
         Read(s);
@@ -103,18 +157,21 @@ class CMcpOptPage : public IPropertyPage {
         m_dirty = FALSE;
         if(McpServerRunning()) {  // apply new port/token at once
             CString err;
-            McpServerStart(s, err);
+            McpTrace("Страница: Apply перезапускает сервер (порт %d)", s.port);
+            BOOL ok = McpServerStart(s, err);
+            McpTrace("Страница: перезапуск сервера: %s %s", ok ? "готово" : "ОШИБКА", (LPCSTR)err);
         }
         UpdateStatus();
+        McpTrace("Страница: Apply выполнен");
         return S_OK;
     }
-    STDMETHOD(Help)(LPCOLESTR) { return E_NOTIMPL; }
-    STDMETHOD(TranslateAccelerator)(MSG* msg) {
-        return m_hwnd && IsDialogMessage(m_hwnd, msg) ? S_OK : S_FALSE;
+    HRESULT TranslateAcceleratorImpl(MSG* msg) {
+        return msg && m_hwnd && IsWindow(m_hwnd) && IsDialogMessage(m_hwnd, msg) ? S_OK : S_FALSE;
     }
 
   private:
     SIZE DialogSize() {
+        McpTrace("Страница: измерение размера диалога");
         SIZE sz = {400, 300};
         CWnd* main = AfxGetMainWnd();
         HWND tmp = CreateDialogParamA(g_hInstDll, MAKEINTRESOURCE(IDD_MCP_PAGE), main ? main->m_hWnd : NULL,
@@ -296,11 +353,20 @@ class CMcpOptPage : public IPropertyPage {
         }
     }
     static BOOL CALLBACK DlgProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+        __try { return DlgProcImpl(h, msg, wp, lp); }
+        __except(McpTraceExc("DlgProc", GetExceptionInformation())) { return FALSE; }
+    }
+    static BOOL DlgProcImpl(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         CMcpOptPage* self = (CMcpOptPage*)GetWindowLong(h, GWL_USERDATA);
         switch(msg) {
             case WM_INITDIALOG:
                 SetWindowLong(h, GWL_USERDATA, (LONG)lp);
                 return TRUE;
+            case WM_DESTROY:
+                KillTimer(h, STATUS_TIMER);
+                if(self && self->m_hwnd == h) self->m_hwnd = NULL;
+                SetWindowLong(h, GWL_USERDATA, 0);
+                return FALSE;
             case WM_COMMAND:
                 if(self) self->OnCommand(LOWORD(wp), HIWORD(wp));
                 return TRUE;
@@ -346,19 +412,50 @@ static CMcpPageFactory g_factory;
 static DWORD g_cookie = 0;
 static BOOL g_pageAdded = FALSE;
 
+static UINT g_watchTimer = 0;
+static int g_watchState = -2;
+static VOID CALLBACK WatchTimerProc(HWND, UINT, UINT, DWORD) {
+    __try {
+        CAppFrame* app = (CAppFrame*)AfxGetApp();
+        if(!app) return;
+        int found = app->m_OlePropertyPageSite.FindPropertyPage(GUID_McpPage);
+        int state = found ? 1 : 0;
+        if(state != g_watchState) {
+            McpTrace("Страница %s в списке параметров (окно параметров: %s)", state ? "ЕСТЬ" : "ПРОПАЛА",
+                     app->m_OlePropertyPageSite.m_hWnd ? "открыто" : "закрыто");
+            g_watchState = state;
+        }
+    }
+    __except(McpTraceExc("WatchTimerProc", GetExceptionInformation())) { g_watchState = -2; }
+}
+
 void McpRegisterOptionsPage() {
+    McpTrace("McpRegisterOptionsPage: уже добавлена=%d", g_pageAdded);
     if(g_pageAdded) return;
     CAppFrame* app = (CAppFrame*)AfxGetApp();
     if(!app) return;
-    if(!g_cookie)
-        CoRegisterClassObject(GUID_McpPage, &g_factory, CLSCTX_INPROC_SERVER, REGCLS_MULTIPLEUSE, &g_cookie);
+    if(!g_cookie) {
+        HRESULT hr = CoRegisterClassObject(GUID_McpPage, &g_factory, CLSCTX_INPROC_SERVER, REGCLS_MULTIPLEUSE, &g_cookie);
+        McpTrace("Регистрация страницы: CoRegisterClassObject = 0x%08lX, cookie=%lu", (DWORD)hr, g_cookie);
+    }
     // same sequence as FormEx: the page site gets only the CLSID
-    if(!app->m_OlePropertyPageSite.FindPropertyPage(GUID_McpPage))
-        app->m_OlePropertyPageSite.AddPropertyPage(GUID_McpPage, NULL);
+    int found = app->m_OlePropertyPageSite.FindPropertyPage(GUID_McpPage);
+    McpTrace("Регистрация страницы: наша найдена в списке=%d", found);
+    if(!found) app->m_OlePropertyPageSite.AddPropertyPage(GUID_McpPage, NULL);
+    McpTrace("Регистрация страницы: после добавления наша найдена в списке=%d",
+             app->m_OlePropertyPageSite.FindPropertyPage(GUID_McpPage));
     g_pageAdded = TRUE;
+    // FormEx adds its page every time the options window opens; we add once. Watch whether our page
+    // disappears from the list later (the site may be rebuilt) - only logged, nothing is re-added here.
+#ifdef MCP_TRACE
+    if(!g_watchTimer) g_watchTimer = SetTimer(NULL, 0, 3000, WatchTimerProc);
+#endif
 }
 
 void McpUnregisterOptionsPage() {
+    McpTrace("McpUnregisterOptionsPage: добавлена=%d", g_pageAdded);
+    if(g_watchTimer) KillTimer(NULL, g_watchTimer);
+    g_watchTimer = 0;
     if(!g_pageAdded) return;
     CAppFrame* app = (CAppFrame*)AfxGetApp();
     if(app) app->m_OlePropertyPageSite.RemovePropertyPage(GUID_McpPage);

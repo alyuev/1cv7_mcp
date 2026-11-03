@@ -647,9 +647,14 @@ JVal McpServer::Dispatch(const JVal& msg, const McpReqCtx& ctx, std::string* new
         bool isError = false, pending = false;
         const std::string lbl = SessionLabel(ctx);
         // what is going to happen: in the log (always Russian, with the exact parameters) and in the window
-        Audit(lbl, "ВЫЗОВ " + name + ": " + McpDescribeCall(name, args, "ru") + " | параметры: " +
+        JVal shown = args;  // the same arguments plus the title of the form (for the description only)
+        if(!args.get("form").asStr().empty()) {
+            std::string title = FormTitle(args);
+            if(!title.empty()) shown.set("_form_title", JVal::string(title));
+        }
+        Audit(lbl, "ВЫЗОВ " + name + ": " + McpDescribeCall(name, shown, "ru") + " | параметры: " +
                        McpShort(args.dump(), 4000));
-        Report(McpDescribeCall(name, args, m_cfg.language), MCP_REP_CALL);
+        Report(McpDescribeCall(name, shown, m_cfg.language), MCP_REP_CALL);
         JVal content = CallTool(name, args, isError, pending);
         if(content.isNull()) {
             Audit(lbl, "ИТОГ " + name + ": ошибка: неизвестный инструмент");
@@ -1357,6 +1362,34 @@ std::string McpServer::Run1C(const std::string& tool, const JVal& args, bool& is
         text = "задача потеряна";
     LeaveCriticalSection(&m_cs);
     return pending ? AddModalInfo(text) : text;
+}
+
+std::string McpServer::FormTitle(const JVal& args) {
+    std::string f = args.get("form").asStr();
+    if(f.empty() || !m_host || IsModal()) return std::string();
+    McpTask* t = new McpTask;
+    t->tool = "_form_title";
+    t->args = JVal::object();
+    t->args.set("form", JVal::string(f));
+    t->state = TS_QUEUED;
+    t->created = GetTickCount();
+    t->started = t->finished = 0;
+    t->ev = CreateEvent(NULL, TRUE, FALSE, NULL);
+    EnterCriticalSection(&m_cs);
+    PruneTasks();
+    t->id = m_nextTaskId++;
+    m_tasks.push_back(t);
+    int id = t->id;
+    HANDLE ev = t->ev;
+    LeaveCriticalSection(&m_cs);
+    m_host->Wake();
+    WaitForSingleObject(ev, 500);
+    std::string title;
+    EnterCriticalSection(&m_cs);
+    McpTask* tt = FindTask(id);
+    if(tt && tt->state == TS_DONE) title = tt->text;
+    LeaveCriticalSection(&m_cs);
+    return title;
 }
 
 std::string McpServer::ToolGetTask(const JVal& args, bool& isError, bool& pending) {

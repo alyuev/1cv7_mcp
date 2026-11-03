@@ -75,11 +75,26 @@ static std::string FirstLine(const std::string& s) {
     return e == std::string::npos ? s : s.substr(0, e);
 }
 
+// characters, not bytes: UTF-8 continuation bytes (10xxxxxx) do not count
+static unsigned Utf8Len(const std::string& s) {
+    unsigned n = 0;
+    for(size_t i = 0; i < s.size(); i++)
+        if(((unsigned char)s[i] & 0xC0) != 0x80) n++;
+    return n;
+}
+
+// the form as the agent named it, plus its title when the server could find it: «Title» (1)
+static std::string FormName(const std::string& lang, const JVal& a) {
+    std::string f = Str(a, "form"), title = Str(a, "_form_title");
+    if(title.empty() || title == f) return Q(lang, McpShort(f, 80));
+    return Q(lang, McpShort(title, 80)) + " (" + McpShort(f, 24) + ")";
+}
+
 // " на форме «X»" / " на активной форме"
 static std::string OnForm(const std::string& lang, const JVal& a) {
     std::string f = Str(a, "form");
     if(f.empty()) return L(lang, " на активной форме", " on the active form", " на активната форма");
-    return L(lang, " на форме ", " on form ", " на формата ") + Q(lang, McpShort(f, 80));
+    return L(lang, " на форме ", " on form ", " на формата ") + FormName(lang, a);
 }
 
 static std::string Num(const JVal& a, const char* key) { return Str(a, key); }
@@ -112,11 +127,11 @@ std::string McpDescribeCall(const std::string& tool, const JVal& a, const std::s
     } else if(tool == "run_code") {
         std::string code = Str(a, "code");
         char n[32];
-        sprintf(n, "%u", (unsigned)code.size());
+        sprintf(n, "%u", Utf8Len(code));
         d = L(lang, "Выполняет код 1С", "Runs 1C code", "Изпълнява код на 1С");
         if(!Str(a, "form").empty())
             d += L(lang, " в контексте формы ", " in the context of form ", " в контекста на формата ") +
-                 Q(lang, McpShort(Str(a, "form"), 80));
+                 FormName(lang, a);
         d += std::string(" (") + n + " " + McpWord("chars", lang) + "): " + McpShort(FirstLine(code), 100);
     } else if(tool == "read_messages") {
         d = L(lang, "Читает окно сообщений 1С", "Reads the 1C message window", "Чете прозореца със съобщения на 1С");
@@ -176,7 +191,7 @@ std::string McpDescribeCall(const std::string& tool, const JVal& a, const std::s
                 Q(lang, McpShort(Str(a, "control"), 80)) + OnForm(lang, a);
         else
             d = L(lang, "Показывает пользователю форму", "Shows the user the form", "Показва на потребителя формата") +
-                (Str(a, "form").empty() ? std::string() : " " + Q(lang, McpShort(Str(a, "form"), 80)));
+                (Str(a, "form").empty() ? std::string() : " " + FormName(lang, a));
     } else if(tool == "caption") {
         d = L(lang, "Показывает пользователю надпись: ", "Shows the user a note: ", "Показва на потребителя надпис: ") +
             Q(lang, McpShort(Str(a, "text"), 120));
@@ -274,7 +289,7 @@ McpResultInfo McpDescribeResult(const std::string& tool, const std::string& text
         }
     } else if(!text.empty() && tool == "metadata") {
         char n[32];
-        sprintf(n, "%u", (unsigned)text.size());
+        sprintf(n, "%u", Utf8Len(text));
         facts = std::string(n) + " " + McpWord("chars", lang);
     } else if(!text.empty() && tool == "dialog_button") {
         facts = McpShort(text, 150);
