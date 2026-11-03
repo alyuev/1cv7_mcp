@@ -4,7 +4,8 @@
 # Usage:
 #   powershell -File build.ps1              # component + selftest
 #   powershell -File build.ps1 -SelfTest    # selftest only (no 1C headers needed)
-param([string]$SqliteRoot = "", [switch]$SelfTest)
+#   powershell -File build.ps1 -Trace       # TRACE build -> build\trace\1cmcp.dll (detailed 1cmcp_trace.log); not for release
+param([string]$SqliteRoot = "", [switch]$SelfTest, [switch]$Trace)
 
 $ErrorActionPreference = 'Stop'
 $proj = $PSScriptRoot
@@ -56,6 +57,9 @@ if ($SelfTest) { Pop-Location; Write-Host "BUILD OK (selftest)" -ForegroundColor
 
 # component: MFC + 1C headers, flags mirror 1sqlite Release
 $vkFlags = @('/nologo','/c','/MD','/GX','/GR','/O2','/Zm200','/DWIN32','/DNDEBUG','/D_NDEBUG','/D_AFXEXT')
+if ($Trace) { $vkFlags += '/DMCP_TRACE' }
+$dllOut = if ($Trace) { 'build\trace\1cmcp.dll' } else { 'build\1cmcp.dll' }
+if ($Trace) { New-Item -ItemType Directory -Force (Join-Path $out 'trace') | Out-Null }
 foreach ($s in @('src\1cmcp.cpp','src\forms.cpp','src\ui.cpp','src\msgwin.cpp','src\optpage.cpp','src\StdAfx.cpp')) { $fail += Compile $s $vkFlags }
 if ($fail) { Pop-Location; Write-Host "Compile errors: $fail" -ForegroundColor Red; exit 1 }
 
@@ -65,7 +69,8 @@ if ($LASTEXITCODE -ne 0) { $o | ForEach-Object { Write-Host $_ }; Pop-Location; 
 
 # link cwd = project dir so the relative lib pragmas in StdAfx.cpp resolve
 $syslibs = @('kernel32.lib','user32.lib','gdi32.lib','advapi32.lib','ole32.lib','oleaut32.lib','uuid.lib','comctl32.lib','version.lib','ws2_32.lib')
-Link (@('/nologo','/DLL','/subsystem:windows','/IGNORE:4089','/OUT:build\1cmcp.dll','obj\1cmcp.obj','obj\forms.obj','obj\ui.obj','obj\msgwin.obj','obj\optpage.obj','obj\StdAfx.obj') + $coreObj + @('obj\1cmcp.res') + $syslibs) '1cmcp.dll'
+Link (@('/nologo','/DLL','/subsystem:windows','/IGNORE:4089',"/OUT:$dllOut",'obj\1cmcp.obj','obj\forms.obj','obj\ui.obj','obj\msgwin.obj','obj\optpage.obj','obj\StdAfx.obj') + $coreObj + @('obj\1cmcp.res') + $syslibs) '1cmcp.dll'
+if ($Trace) { Pop-Location; Write-Host "TRACE BUILD OK -> $out\trace\1cmcp.dll (rebuild without -Trace before a release)" -ForegroundColor Yellow; exit 0 }
 # syntax help next to the DLL: regenerate 1cmcp.als (version from core\mcp_version.h) and copy it to build\
 $py = Get-Command python -ErrorAction SilentlyContinue
 if ($py) { & $py.Source -I (Join-Path $proj 'docs\make_als.py') | Out-Null }
