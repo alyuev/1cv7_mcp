@@ -216,7 +216,7 @@ try:
 except IOError:
     txt = ""
 lines = txt.splitlines()
-check(txt.startswith("2") and all(l.count(" | ") >= 3 for l in lines if l), "log file: every line is time | user | session | text", lines[:2])
+check(txt.startswith("2") and all(l.count(" | ") >= 3 for l in lines if l and not l.startswith("    ")), "log file: every line is time | user | session | text", lines[:2])
 check("ВЫЗОВ press_button: Нажимает кнопку «флДаты» на форме" in txt or "ВЫЗОВ press_button: Нажимает кнопку «флДаты» на активной форме" in txt,
       "log: the call is described in words", lines[-4:])
 check('"button":"флДаты","say":"журнал: нажатие"}' in txt and "| параметры: {" in txt, "log: the exact parameters (with the note) are written", lines[-4:])

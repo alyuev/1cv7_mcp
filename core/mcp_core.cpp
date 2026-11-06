@@ -213,6 +213,8 @@ bool McpServer::Start(const McpConfig& cfg, McpHost* host, std::string& err) {
     }
     sprintf(buf, " %s:%d (%s)", m_cfg.bindAddr.c_str(), m_cfg.port, m_cfg.userName.c_str());
     Report(McpWord("started", m_cfg.language) + buf, MCP_REP_INFO);
+    if(!m_cfg.auditPath.empty())
+        Report(McpWord("logfile", m_cfg.language) + ": " + Cp1251ToUtf8(m_cfg.auditPath), MCP_REP_INFO);
     return true;
 }
 
@@ -337,12 +339,19 @@ void McpServer::ServeConnection(unsigned int sock) {
         size_t hend;
         while((hend = buf.find("\r\n\r\n")) == std::string::npos) {
             if(buf.size() > MAX_HEADER) {
+                AuditHttp(peer, "HTTP-ОШИБКА 431: слишком длинный заголовок запроса");
                 SendResponse(s, 431, "Request Header Fields Too Large", "text/plain", "", false);
                 return;
             }
             char tmp[8192];
             int n = recv(s, tmp, sizeof(tmp), 0);
-            if(n <= 0) return;
+            if(n <= 0) {
+                if(reqNo == 0 && buf.empty())
+                    AuditHttp(peer, "СОЕДИНЕНИЕ: клиент подключился и закрыл его, не отправив запрос");
+                else if(!buf.empty())
+                    AuditHttp(peer, "СОЕДИНЕНИЕ: оборвано на середине заголовка запроса, получено " + McpShort(buf, 200));
+                return;
+            }
             buf.append(tmp, n);
         }
         std::string head = buf.substr(0, hend);
@@ -355,6 +364,7 @@ void McpServer::ServeConnection(unsigned int sock) {
             size_t a = reqLine.find(' ');
             size_t b = a == std::string::npos ? a : reqLine.find(' ', a + 1);
             if(a == std::string::npos || b == std::string::npos) {
+                AuditHttp(peer, "HTTP-ОШИБКА 400: не HTTP-запрос, получено " + McpShort(reqLine, 200));
                 SendResponse(s, 400, "Bad Request", "text/plain", "bad request line", false);
                 return;
             }
@@ -365,7 +375,7 @@ void McpServer::ServeConnection(unsigned int sock) {
         size_t q = path.find('?');
         if(q != std::string::npos) path.erase(q);
 
-        std::string auth, origin, conn, sid;
+        std::string auth, origin, conn, sid, ua;
         long clen = 0;
         size_t pos = eol == std::string::npos ? head.size() : eol + 2;
         while(pos < head.size()) {
@@ -383,13 +393,20 @@ void McpServer::ServeConnection(unsigned int sock) {
             else if(name == "origin") origin = val;
             else if(name == "connection") conn = Lower(val);
             else if(name == "mcp-session-id") sid = val;
+            else if(name == "user-agent") ua = val;
             else if(name == "transfer-encoding") {
+                peer.ua = McpShort(ua, 80);
+                AuditHttp(peer, "HTTP-ОШИБКА 411: " + method + " " + path + " с chunked-телом, не поддерживается");
                 SendResponse(s, 411, "Length Required", "text/plain", "chunked bodies are not supported", false);
                 return;
             }
         }
         bool keep = conn.find("close") == std::string::npos && proto != "HTTP/1.0";
+        peer.ua = McpShort(ua, 80);
+        peer.session = sid.size() > 64 ? sid.substr(0, 64) : sid;
+        const std::string desc = method + " " + path + (peer.ua.empty() ? std::string() : ", User-Agent: " + peer.ua);
         if(clen < 0 || clen > MAX_BODY) {
+            AuditHttp(peer, "HTTP-ОШИБКА 413: " + desc + ", тело слишком большое");
             SendResponse(s, 413, "Payload Too Large", "text/plain", "", false);
             return;
         }
@@ -405,18 +422,19 @@ void McpServer::ServeConnection(unsigned int sock) {
 
         // ---- routing ----
         if(path == "/health") {
+            AuditHttp(peer, "HTTP: " + desc + " -> 200 (проверка доступности)");
             SendResponse(s, 200, "OK", "text/plain", "ok", keep);
             if(!keep) return;
             continue;
         }
         if(path != "/mcp" && path != "/") {
+            AuditHttp(peer, "HTTP: " + desc + " -> 404 (адрес сервера MCP: /mcp)");
             SendResponse(s, 404, "Not Found", "text/plain", "MCP endpoint is /mcp", keep);
             if(!keep) return;
             continue;
         }
-        peer.session = sid.size() > 64 ? sid.substr(0, 64) : sid;
         if(!OriginAllowed(origin)) {
-            Audit("- " + peer.ip, "ОТКЛОНЕНО: чужой заголовок Origin " + McpShort(origin, 100));
+            Audit("- " + peer.ip, "ОТКЛОНЕНО: чужой заголовок Origin " + McpShort(origin, 100) + " (" + desc + ")");
             if(GetTickCount() - m_lastRejectReport > 10000) {
                 m_lastRejectReport = GetTickCount();
                 Report(McpWord("rejected", m_cfg.language) + ": " + McpWord("badorigin", m_cfg.language) + " (" + peer.ip + ")",
@@ -428,7 +446,8 @@ void McpServer::ServeConnection(unsigned int sock) {
         {
             std::string expect = "Bearer " + m_cfg.token;
             if(!TokenEquals(auth, expect)) {
-                Audit("- " + peer.ip, "ОТКЛОНЕНО: неверный или отсутствующий токен");
+                Audit("- " + peer.ip, "ОТКЛОНЕНО: неверный или отсутствующий токен (" + desc + ", заголовок Authorization " +
+                                          (auth.empty() ? "отсутствует" : "есть, но токен другой") + ")");
                 if(GetTickCount() - m_lastRejectReport > 10000) {  // the window gets one note per 10 s
                     m_lastRejectReport = GetTickCount();
                     Report(McpWord("rejected", m_cfg.language) + ": " + McpWord("badtoken", m_cfg.language) + " (" + peer.ip + ")",
@@ -444,6 +463,7 @@ void McpServer::ServeConnection(unsigned int sock) {
         }
         if(method != "POST") {
             // no server-initiated SSE stream in this server
+            AuditHttp(peer, "HTTP: " + desc + " -> 405 (потока сервера нет, клиент должен работать через POST)");
             SendResponse(s, 405, "Method Not Allowed", "text/plain", "", keep, "Allow: POST\r\n");
             if(!keep) return;
             continue;
@@ -482,6 +502,7 @@ std::string McpServer::HandleRpc(const std::string& body, int& httpStatus, const
     httpStatus = 200;
     if(!JVal::parse(body, msg, err)) {
         httpStatus = 400;
+        AuditHttp(ctx, "HTTP-ОШИБКА 400: тело запроса не JSON (" + err + "), начало: " + McpShort(body, 300));
         return RpcError(JVal(), -32700, "Parse error: " + err).dump();
     }
     if(msg.isArr()) {
@@ -574,16 +595,35 @@ std::string McpServer::SessionLabel(const McpReqCtx& ctx) {
 }
 
 JVal McpServer::Dispatch(const JVal& msg, const McpReqCtx& ctx, std::string* newSession) {
-    if(!msg.isObj()) return RpcError(JVal(), -32600, "Invalid Request");
-    if(!msg.has("id")) return JVal();      // notification (e.g. notifications/initialized)
+    if(!msg.isObj()) {
+        AuditHttp(ctx, "ЗАПРОС MCP: не объект JSON-RPC: " + McpShort(msg.dump(), 200));
+        return RpcError(JVal(), -32600, "Invalid Request");
+    }
+    if(!ctx.session.empty()) {  // the client keeps a session id the server does not know (1C restarted?)
+        bool known = false;
+        EnterCriticalSection(&m_sesCs);
+        for(size_t i = 0; i < m_sessions.size(); i++)
+            if(m_sessions[i].id == ctx.session) { known = true; break; }
+        LeaveCriticalSection(&m_sesCs);
+        if(!known)
+            AuditHttp(ctx, "СЕАНС НЕИЗВЕСТЕН: клиент прислал Mcp-Session-Id, которого нет у сервера (сервер или 1С перезапускались?); "
+                           "запрос обрабатывается, клиенту стоит заново выполнить initialize");
+    }
+    if(!msg.has("id")) {  // notification (e.g. notifications/initialized)
+        AuditHttp(ctx, "УВЕДОМЛЕНИЕ MCP: " + McpShort(msg.get("method").asStr(), 80));
+        return JVal();
+    }
     const JVal& id = msg.get("id");
     if(!msg.has("method")) return JVal();  // a response to us - ignore
     std::string method = msg.get("method").asStr();
     const JVal& params = msg.get("params");
+    if(method != "initialize" && method != "tools/list" && method != "tools/call" && method != "prompts/get")
+        AuditHttp(ctx, "ЗАПРОС MCP: " + McpShort(method, 80) + (ctx.ua.empty() ? std::string() : " (User-Agent: " + ctx.ua + ")"));
 
     JVal result = JVal::object();
     if(method == "initialize") {
         std::string pv = params.get("protocolVersion").asStr();
+        const std::string pvAsked = pv;
         if(pv != "2025-06-18" && pv != "2025-03-26" && pv != "2024-11-05") pv = "2025-06-18";
         {
             Session s;
@@ -604,7 +644,8 @@ JVal McpServer::Dispatch(const JVal& msg, const McpReqCtx& ctx, std::string* new
             sc.session = s.id;
             sc.ip = ctx.ip;
             Audit(SessionLabel(sc), "ПОДКЛЮЧЕНИЕ ИИ-клиента " + s.client + (s.version.empty() ? "" : " " + s.version) +
-                                        ", протокол MCP " + pv + ", адрес " + ctx.ip + ", сессия " + s.id);
+                                        ", протокол MCP " + pv + (pvAsked != pv ? " (клиент просил " + pvAsked + ")" : std::string()) + ", адрес " + ctx.ip +
+                                        ", сессия " + s.id + (ctx.ua.empty() ? std::string() : ", User-Agent: " + ctx.ua));
             Report(McpWord("connected", m_cfg.language) + ": " + s.client + (s.version.empty() ? "" : " " + s.version) +
                        " (" + McpWord("session", m_cfg.language) + " " + s.id + ")",
                    MCP_REP_INFO);
@@ -652,8 +693,29 @@ JVal McpServer::Dispatch(const JVal& msg, const McpReqCtx& ctx, std::string* new
             std::string title = FormTitle(args);
             if(!title.empty()) shown.set("_form_title", JVal::string(title));
         }
-        Audit(lbl, "ВЫЗОВ " + name + ": " + McpDescribeCall(name, shown, "ru") + " | параметры: " +
-                       McpShort(args.dump(), 4000));
+        // multi-line 1C code is written as a readable block under the call, not as one escaped JSON line
+        JVal logArgs = args;
+        std::string codeText;
+        const char* codeKey = name == "run_code" ? "code" : name == "eval" ? "expression" : NULL;
+        if(codeKey && args.get(codeKey).asStr().find('\n') != std::string::npos) {
+            codeText = args.get(codeKey).asStr();
+            logArgs = JVal::object();
+            for(size_t i = 0; i < args.size(); i++) {
+                if(args.keyAt(i) == codeKey) logArgs.set(codeKey, JVal::string("(см. ниже)"));
+                else logArgs.set(args.keyAt(i).c_str(), args.valAt(i));
+            }
+        }
+        std::string head = "ВЫЗОВ " + name + ": " + McpDescribeCall(name, shown, "ru") + " | параметры: " +
+                           McpShort(logArgs.dump(), 4000);
+        if(!codeText.empty()) {
+            size_t lines = 1;
+            for(size_t i = 0; i < codeText.size(); i++)
+                if(codeText[i] == '\n') lines++;
+            char nb[48];
+            sprintf(nb, "%u", (unsigned)lines);
+            head += std::string("\n--- код 1С, строк: ") + nb + " ---\n" + McpShort(codeText, 20000) + "\n---";
+        }
+        Audit(lbl, head);
         Report(McpDescribeCall(name, shown, m_cfg.language), MCP_REP_CALL);
         JVal content = CallTool(name, args, isError, pending);
         if(content.isNull()) {
@@ -701,6 +763,7 @@ JVal McpServer::Dispatch(const JVal& msg, const McpReqCtx& ctx, std::string* new
         result.set("description", JVal::string("Демо 1cmcp"));
         result.set("messages", msgs);
     } else {
+        AuditHttp(ctx, "ОШИБКА: метод MCP " + McpShort(method, 80) + " сервером не поддерживается");
         return RpcError(id, -32601, "Method not found: " + method);
     }
     JVal r = JVal::object();
@@ -1478,7 +1541,14 @@ void McpServer::Audit(const std::string& sess, const std::string& line) {
     GetLocalTime(&st);
     char ts[64];
     sprintf(ts, "%04d-%02d-%02d %02d:%02d:%02d | ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-    std::string out = std::string(ts) + m_who + " | " + (sess.empty() ? std::string("-") : sess) + " | " + line + "\r\n";
+    // a multi-line text (the 1C code of a call) goes on indented lines: readable and still one record
+    std::string text;
+    for(size_t i = 0; i < line.size(); i++) {
+        if(line[i] == '\r') continue;
+        if(line[i] == '\n') text += "\r\n    ";
+        else text += line[i];
+    }
+    std::string out = std::string(ts) + m_who + " | " + (sess.empty() ? std::string("-") : sess) + " | " + text + "\r\n";
     EnterCriticalSection(&m_auditCs);
     if(!m_cfg.auditPath.empty()) {
         FILE* f = fopen(m_cfg.auditPath.c_str(), "ab");
@@ -1495,11 +1565,16 @@ void McpServer::Audit(const std::string& sess, const std::string& line) {
     LeaveCriticalSection(&m_auditCs);
 }
 
+std::string McpServer::HttpLabel(const McpReqCtx& ctx) {
+    return ctx.session.empty() ? "- " + ctx.ip : ctx.session + " " + ctx.ip;
+}
+
 void McpServer::SetAuditPath(const std::string& path) {
     EnterCriticalSection(&m_auditCs);
     m_cfg.auditPath = path;
     LeaveCriticalSection(&m_auditCs);
     Audit(path.empty() ? "ЖУРНАЛ ВЫЗОВОВ выключен" : "ЖУРНАЛ ВЫЗОВОВ: файл журнала задан заново: " + Cp1251ToUtf8(path));
+    if(!path.empty()) Report(McpWord("logfile", m_cfg.language) + ": " + Cp1251ToUtf8(path), MCP_REP_INFO);
 }
 
 std::string McpServer::AuditPath() {

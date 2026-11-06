@@ -42,6 +42,7 @@ std::string McpWord(const char* key, const std::string& lang) {
     if(k == "sec") return L(lang, "с", "s", "с");
     if(k == "ms") return L(lang, "мс", "ms", "мс");
     if(k == "chars") return L(lang, "симв.", "chars", "симв.");
+    if(k == "logfile") return L(lang, "Журнал вызовов", "Call log", "Журнал на извикванията");
     return k;
 }
 

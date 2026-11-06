@@ -53,6 +53,7 @@ struct McpConfig {
 struct McpReqCtx {
     std::string session;
     std::string ip;
+    std::string ua;  // User-Agent of the HTTP request
 };
 
 struct McpTask;
@@ -111,6 +112,9 @@ class McpServer {
     // call log: "time | 1C user@computer #pid | MCP session | text", always in Russian
     void Audit(const std::string& sess, const std::string& line);
     void Audit(const std::string& line) { Audit(std::string(), line); }
+    // an HTTP-level event (no JSON-RPC session counting): label = session + address
+    std::string HttpLabel(const McpReqCtx& ctx);
+    void AuditHttp(const McpReqCtx& ctx, const std::string& text) { Audit(HttpLabel(ctx), text); }
     // the same event for the actions window, in the configured language
     void Report(const std::string& text, int kind, bool result = false);
     std::string NewSessionId();
