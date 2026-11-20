@@ -840,11 +840,11 @@ void McpLoadSettings(McpSettings& s) {
     s.addr = "127.0.0.1";
     s.token.Empty();
     s.allowCode = TRUE;
-    s.autoStart = FALSE;
+    s.autoStart = TRUE;
     s.highlight = TRUE;
     s.language.Empty();
     s.logFile.Empty();
-    s.actionWindow = FALSE;
+    s.actionWindow = TRUE;
     CString p = McpSettingsPath();
     if(p.IsEmpty()) return;
     char buf[512];
@@ -854,13 +854,13 @@ void McpLoadSettings(McpSettings& s) {
     GetPrivateProfileStringA("Server", "Token", "", buf, sizeof(buf), p);
     s.token = buf;
     s.allowCode = GetPrivateProfileIntA("Server", "AllowCode", 1, p) != 0;
-    s.autoStart = GetPrivateProfileIntA("Server", "AutoStart", 0, p) != 0;
+    s.autoStart = GetPrivateProfileIntA("Server", "AutoStart", 1, p) != 0;
     s.highlight = GetPrivateProfileIntA("Server", "Highlight", 1, p) != 0;
     GetPrivateProfileStringA("Server", "Language", "", buf, sizeof(buf), p);
     s.language = buf;
     GetPrivateProfileStringA("Server", "LogFile", "", buf, sizeof(buf), p);
     s.logFile = buf;
-    s.actionWindow = GetPrivateProfileIntA("Server", "ActionWindow", 0, p) != 0;
+    s.actionWindow = GetPrivateProfileIntA("Server", "ActionWindow", 1, p) != 0;
     g_mcpHighlight = s.highlight != 0;  // what is in the file is what is shown
 }
 
