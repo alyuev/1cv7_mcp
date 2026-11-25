@@ -408,16 +408,63 @@ static std::string g_say;  // UTF-8; taken by the next highlight (McpSay)
 void McpSay(const std::string& utf8) { g_say = utf8; }
 std::string McpPendingSay() { return g_say; }
 
+// The note is a rounded body with a tail (TIPT px) pointing at the target. The window is the body plus TIPT on
+// every side; its region is the body united with the tail. side: 0 = body right of the target (tail on its
+// left edge), 1 = left, 2 = below, 3 = above; tp = offset of the tail along that edge.
+static const int TIPT = 10;
+static void TipTail(int bw, int bh, int side, int tp, POINT* q) {
+    const int T = TIPT, hw = 7;
+    switch(side) {
+    case 0: q[0].x = 0; q[0].y = T + tp; q[1].x = T; q[1].y = T + tp - hw; q[2].x = T; q[2].y = T + tp + hw; break;
+    case 1: q[0].x = 2 * T + bw - 1; q[0].y = T + tp; q[1].x = T + bw; q[1].y = T + tp - hw; q[2].x = T + bw; q[2].y = T + tp + hw; break;
+    case 2: q[0].x = T + tp; q[0].y = 0; q[1].x = T + tp - hw; q[1].y = T; q[2].x = T + tp + hw; q[2].y = T; break;
+    default: q[0].x = T + tp; q[0].y = 2 * T + bh - 1; q[1].x = T + tp - hw; q[1].y = T + bh; q[2].x = T + tp + hw; q[2].y = T + bh; break;
+    }
+}
+static void TipShape(HWND h) {
+    int bw = (int)GetProp(h, "bw"), bh = (int)GetProp(h, "bh");
+    POINT q[3];
+    TipTail(bw, bh, (int)GetProp(h, "side"), (int)GetProp(h, "tp"), q);
+    HRGN body = CreateRoundRectRgn(TIPT, TIPT, TIPT + bw + 1, TIPT + bh + 1, 11, 11);
+    HRGN tri = CreatePolygonRgn(q, 3, ALTERNATE);
+    CombineRgn(body, body, tri, RGN_OR);
+    DeleteObject(tri);
+    SetWindowRgn(h, body, TRUE);  // the system owns the region now
+}
+static void TipSetSide(HWND h, int side, int tp) {
+    if((int)GetProp(h, "side") == side && (int)GetProp(h, "tp") == tp && GetProp(h, "shaped")) return;
+    SetProp(h, "side", (HANDLE)side);
+    SetProp(h, "tp", (HANDLE)tp);
+    SetProp(h, "shaped", (HANDLE)1);
+    TipShape(h);
+    InvalidateRect(h, NULL, TRUE);
+}
+
 static LRESULT CALLBACK TipProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     if(msg == WM_PAINT) {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
-        RECT r;
-        GetClientRect(h, &r);
+        const int T = TIPT;
+        int bw = (int)GetProp(h, "bw"), bh = (int)GetProp(h, "bh");
+        int side = (int)GetProp(h, "side"), tp = (int)GetProp(h, "tp");
+        RECT r = {T, T, T + bw, T + bh};
         HBRUSH bg = CreateSolidBrush(RGB(255, 249, 214));
         HPEN pen = CreatePen(PS_SOLID, 2, RGB(226, 120, 0));
         HGDIOBJ ob = SelectObject(dc, bg), op = SelectObject(dc, pen);
         RoundRect(dc, r.left + 1, r.top + 1, r.right, r.bottom, 10, 10);
+        {  // the tail: fill (hides the frame at its base), then only its two sides
+            POINT q[3];
+            TipTail(bw, bh, side, tp, q);
+            HGDIOBJ np = SelectObject(dc, GetStockObject(NULL_PEN));
+            Polygon(dc, q, 3);
+            SelectObject(dc, pen);
+            POINT l[3];
+            l[0] = q[1];
+            l[1] = q[0];
+            l[2] = q[2];
+            Polyline(dc, l, 3);
+            SelectObject(dc, np);
+        }
         SelectObject(dc, ob);
         SelectObject(dc, op);
         DeleteObject(bg);
@@ -438,6 +485,11 @@ static LRESULT CALLBACK TipProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         delete[] (wchar_t*)GetWindowLong(h, GWL_USERDATA);
         HFONT f = (HFONT)RemoveProp(h, "font");
         if(f) DeleteObject(f);
+        RemoveProp(h, "bw");
+        RemoveProp(h, "bh");
+        RemoveProp(h, "side");
+        RemoveProp(h, "tp");
+        RemoveProp(h, "shaped");
     }
     return DefWindowProc(h, msg, wp, lp);
 }
@@ -476,12 +528,11 @@ static HWND Callout(const std::string& utf8, HWND owner) {
     DrawTextW(dc, w, -1, &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
     SelectObject(dc, of);
     ReleaseDC(h, dc);
-    SetWindowPos(h, NULL, 0, 0, r.right + 20, r.bottom + 14, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    {  // round the window itself: corners outside the rounded frame must not stay black
-        RECT wr;
-        GetWindowRect(h, &wr);
-        SetWindowRgn(h, CreateRoundRectRgn(0, 0, wr.right - wr.left + 1, wr.bottom - wr.top + 1, 11, 11), FALSE);
-    }
+    int bw = r.right + 20, bh = r.bottom + 14;
+    SetProp(h, "bw", (HANDLE)bw);
+    SetProp(h, "bh", (HANDLE)bh);
+    SetWindowPos(h, NULL, 0, 0, bw + 2 * TIPT, bh + 2 * TIPT, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    TipSetSide(h, 2, 20);
     if(LayeredFn()) LayeredFn()(h, 0, 0, LWA_ALPHA);
     return h;
 }
@@ -526,6 +577,58 @@ bool McpInView(HWND wnd) {
     return FitsInAncestors(GetParent(wnd), r);
 }
 
+// Where the note goes: beside the target (right, below, left, above), inside the screen and clear of the notes
+// of the earlier highlights; the tail then points at the target. x, y = the window's corner.
+static void PlaceTip(HlItem& it, const RECT& tg, int& x, int& y) {
+    const int T = TIPT;
+    int bw = (int)GetProp(it.tip, "bw"), bh = (int)GetProp(it.tip, "bh");
+    RECT scr = {GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN), 0, 0};
+    scr.right = scr.left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    scr.bottom = scr.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    RECT occ[16];
+    int no = 0;
+    for(size_t k = 0; k < g_hl.size() && no < 16; k++) {
+        HlItem& o = g_hl[k];
+        if(o.id >= it.id || !o.tip || !IsWindow(o.tip) || !IsWindowVisible(o.tip)) continue;
+        GetWindowRect(o.tip, &occ[no]);
+        InflateRect(&occ[no], -T + 4, -T + 4);
+        no++;
+    }
+    int cx = (tg.left + tg.right) / 2, cy = (tg.top + tg.bottom) / 2;
+    static const int order[4] = {0, 2, 1, 3};
+    int best = -1, bx = 0, by = 0, fit = -1, fx = 0, fy = 0;
+    for(int n = 0; n < 4 && best < 0; n++) {
+        int s = order[n], px, py;
+        if(s == 0) { px = tg.right + 2 + T; py = cy - bh / 2; }
+        else if(s == 1) { px = tg.left - 2 - T - bw; py = cy - bh / 2; }
+        else if(s == 2) { px = cx - bw / 2; py = tg.bottom + 2 + T; }
+        else { px = cx - bw / 2; py = tg.top - 2 - T - bh; }
+        if(s < 2) {
+            if(px < scr.left + T || px + bw > scr.right - T) continue;
+            py = max((int)scr.top + T, min(py, (int)scr.bottom - bh - T));
+        } else {
+            if(py < scr.top + T || py + bh > scr.bottom - T) continue;
+            px = max((int)scr.left + T, min(px, (int)scr.right - bw - T));
+        }
+        RECT b = {px, py, px + bw, py + bh}, t;
+        bool hit = false;
+        for(int k = 0; k < no; k++)
+            if(IntersectRect(&t, &b, &occ[k])) hit = true;
+        if(!hit) { best = s; bx = px; by = py; }
+        else if(fit < 0) { fit = s; fx = px; fy = py; }
+    }
+    if(best < 0 && fit >= 0) { best = fit; bx = fx; by = fy; }
+    if(best < 0) {  // nowhere beside it: below, kept on the screen
+        best = 2;
+        bx = max((int)scr.left + T, min(cx - bw / 2, (int)scr.right - bw - T));
+        by = max((int)scr.top + T, min((int)tg.bottom + 2 + T, (int)scr.bottom - bh - T));
+    }
+    int tp = best < 2 ? max(10, min(cy - by, bh - 10)) : max(10, min(cx - bx, bw - 10));
+    TipSetSide(it.tip, best, tp);
+    x = bx - T;
+    y = by - T;
+}
+
 // one frame of the animation; false = finished
 static bool HlStep(HlItem& it, DWORD now) {
     int t = (int)(now - it.start);
@@ -568,14 +671,8 @@ static bool HlStep(HlItem& it, DWORD now) {
     int pos[4][4] = {{r.left, r.top, w, th}, {r.left, r.bottom - th, w, th}, {r.left, r.top, th, h},
                      {r.right - th, r.top, th, h}};
     if(it.tip) {
-        RECT tr;
-        GetWindowRect(it.tip, &tr);
-        int tw = tr.right - tr.left, tht = tr.bottom - tr.top;
-        int sw = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        int sh = GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        int x = r.left, y = r.bottom + 4;
-        if(y + tht > sh) y = r.top - tht - 4;
-        if(x + tw > sw) x = sw - tw - 4;
+        int x, y;
+        PlaceTip(it, r, x, y);
         BYTE ta = (BYTE)(t < 250 ? 255 * t / 250 : alpha);  // fades in, then with the frame
         if(LayeredFn()) LayeredFn()(it.tip, 0, ta, LWA_ALPHA);
         SetWindowPos(it.tip, it.hasAbs ? HWND_TOPMOST : HWND_TOP, x, y, 0, 0,

@@ -153,14 +153,20 @@ class CMcpOptPage : public IPropertyPage {
             SetFocus(GetDlgItem(m_hwnd, IDC_TOKEN));
             return E_FAIL;
         }
+        McpSettings old;
+        McpLoadSettings(old);  // what the running server was started with
         McpSaveSettings(s);
         m_dirty = FALSE;
-        if(McpServerRunning()) {  // apply new port/token at once
+        // only what the server is built from needs a restart; flags and the log path apply on the fly
+        BOOL need = s.port != old.port || s.addr != old.addr || s.token != old.token || s.allowCode != old.allowCode ||
+                    McpLanguage(s) != McpLanguage(old);
+        if(McpServerRunning() && need) {  // apply new port/token at once
             CString err;
             McpTrace("Страница: Apply перезапускает сервер (порт %d)", s.port);
             BOOL ok = McpServerStart(s, err);
             McpTrace("Страница: перезапуск сервера: %s %s", ok ? "готово" : "ОШИБКА", (LPCSTR)err);
         }
+        if(McpServerRunning() && !need && s.logFile != old.logFile) McpServerSetLogPath(McpLogPath(s), FALSE);
         UpdateStatus();
         McpTrace("Страница: Apply выполнен");
         return S_OK;
