@@ -477,6 +477,11 @@ static HWND Callout(const std::string& utf8, HWND owner) {
     SelectObject(dc, of);
     ReleaseDC(h, dc);
     SetWindowPos(h, NULL, 0, 0, r.right + 20, r.bottom + 14, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    {  // round the window itself: corners outside the rounded frame must not stay black
+        RECT wr;
+        GetWindowRect(h, &wr);
+        SetWindowRgn(h, CreateRoundRectRgn(0, 0, wr.right - wr.left + 1, wr.bottom - wr.top + 1, 11, 11), FALSE);
+    }
     if(LayeredFn()) LayeredFn()(h, 0, 0, LWA_ALPHA);
     return h;
 }
